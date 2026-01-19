@@ -13,6 +13,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install SwiftLint
+      run: brew install swiftlint
+
+    - name: Run Linting
+      run: make lint
+
     - name: Run Unit Tests
       run: make test
 

@@ -46,7 +46,7 @@ func testBasicInput() {
         state: engine.initialState, keyCode: .chars("\\"))
     assertTrue(s1.active, "State should be active")
     assertEqual(s1.buffer, "\\", "Buffer should be \\")
-    if a1.count > 0 {
+    if !a1.isEmpty {
         assertEqual(a1[0], EngineAction.updateComposition("\\"), "Action 1 mismatch")
     }
 
@@ -58,7 +58,7 @@ func testBasicInput() {
     let (s3, a3) = engine.reduce(state: s2, keyCode: .chars("a"))
     assertFalse(s3.active, "Should deactivate after commit")
     assertEqual(s3.buffer, "", "Buffer cleared")
-    if a3.count > 0 {
+    if !a3.isEmpty {
         assertEqual(a3[0], EngineAction.commit("λ"), "Should commit λ")
     }
 }

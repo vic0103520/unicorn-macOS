@@ -8,9 +8,17 @@ CONFIG = Debug
 APP_BUNDLE = $(PWD)/Library/Input Methods/$(CONFIG)/$(APP_NAME).app
 INSTALL_DIR = $(HOME)/Library/Input Methods
 
-.PHONY: all build install clean test
+.PHONY: all build install clean test lint format
 
 all: build
+
+# Run SwiftLint to check for code style issues
+lint:
+	swiftlint lint --strict
+
+# Run SwiftLint to automatically fix code style issues
+format:
+	swiftlint --fix
 
 # Build the project using xcodebuild
 build:

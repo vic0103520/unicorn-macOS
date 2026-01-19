@@ -22,7 +22,7 @@ public final class Trie: Decodable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: DynamicKey.self)
-        var candidates: [String]? = nil
+        var candidates: [String]?
         var children: [Character: Trie] = [:]
 
         for key in container.allKeys {
@@ -265,10 +265,7 @@ public class Engine {
 
     /// Pure transition function: (State, Input) -> (NewState, [Action])
     public func reduce(state: EngineState, keyCode: KeyCode) -> (EngineState, [EngineAction]) {
-        let move = {
-            (newWindow, direction) -> (
-                EngineState, [EngineAction]
-            ) in
+        let move = { (newWindow, direction) -> (EngineState, [EngineAction]) in
             let nextState = EngineState(
                 path: state.path, buffer: state.buffer, active: state.active,
                 candidateWindow: newWindow)
@@ -322,8 +319,7 @@ public class Engine {
 
         // Candidate selection by number (1-9)
         if state.candidateWindow.isVisible,
-            let digit = Int(String(char)), digit >= 1, digit <= 9
-        {
+            let digit = Int(String(char)), digit >= 1, digit <= 9 {
             let index = state.candidateWindow.firstVisibleIndex + digit - 1
             if index < state.candidates.count {
                 return (resetState(active: false, buffer: ""), [.commit(state.candidates[index])])
