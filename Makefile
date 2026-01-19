@@ -25,7 +25,10 @@ build:
 	xcodebuild -project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration $(CONFIG) \
-		-derivedDataPath $(BUILD_DIR)
+		-derivedDataPath $(BUILD_DIR) \
+		CODE_SIGN_IDENTITY="" \
+		CODE_SIGNING_REQUIRED=NO \
+		CODE_SIGNING_ALLOWED=NO
 
 # Install the Input Method to the user's Library
 install: build
