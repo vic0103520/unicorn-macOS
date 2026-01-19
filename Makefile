@@ -3,14 +3,22 @@
 # Variables
 APP_NAME = unicorn
 BUILD_DIR = build
-CONFIG = Debug
+CONFIG = Release
 # Actual built product path from xcodebuild output
 APP_BUNDLE = $(PWD)/Library/Input Methods/$(CONFIG)/$(APP_NAME).app
 INSTALL_DIR = $(HOME)/Library/Input Methods
 
-.PHONY: all build install clean test lint format
+.PHONY: all build install build-debug install-debug clean test lint format
 
 all: build
+
+# Build the project in Debug mode
+build-debug:
+	$(MAKE) build CONFIG=Debug
+
+# Install the project in Debug mode
+install-debug:
+	$(MAKE) install CONFIG=Debug
 
 # Run SwiftLint to check for code style issues
 lint:
