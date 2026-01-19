@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build
+      run: |
+        make build
+        # Create a clean dist directory
+        mkdir dist
+        # Copy the built app to dist
+        cp -R "build/Build/Products/Debug/unicorn.app" dist/
+
+    - name: Archive
+      run: |
+        cd dist
+        zip -r unicorn-macos.zip unicorn.app
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/unicorn-macos.zip
+        generate_release_notes: true
