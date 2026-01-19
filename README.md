@@ -37,44 +37,36 @@
 *   **macOS:** 14.0 or later.
 *   **Xcode:** 16.0 or later (Swift 6.0).
 
-### Build & Install
-The project includes a `Makefile` to automate the build and installation process:
+### Build & Install from Source
+The project includes a `Makefile` to automate the process. By default, it installs in **Release** mode for performance.
 
 ```bash
-# Build and install for development (Debug)
+# Build and install (Release)
 make install
-
-# Build and install for production (Release)
-make install CONFIG=Release
 ```
 
 **What this command does:**
 1.  **Build:** Builds the `unicorn.app` bundle using `xcodebuild`.
-2.  **Installation:** Copies the app bundle to `~/Library/Input Methods/`.
-3.  **Registration:** Runs `lsregister` to notify macOS of the new Input Method.
-4.  **Restart:** Restarts the `unicorn` process to apply changes immediately.
+2.  **Installation:** Copies the bundle to `~/Library/Input Methods/`.
+3.  **Registration:** Runs `lsregister` to notify macOS of the new source.
+4.  **Restart:** Restarts the process to apply changes.
+
+### Alternative: Installation via Pre-built Binary
+1.  **Download:** Get `unicorn-macos.zip` from **[Releases](https://github.com/zyshih/unicorn-macos/releases)**.
+2.  **Install:** Move `unicorn.app` to `~/Library/Input Methods/`.
+3.  **Register:** Run:
+    ```bash
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f ~/Library/Input\ Methods/unicorn.app
+    ```
+4.  **Gatekeeper:** Right-click the app in Finder and select **Open** to authorize it.
 
 ### Enabling the Input Method
-Once installed, you must enable it in macOS:
 1.  Open **System Settings** -> **Keyboard** -> **Input Sources**.
 2.  Click **Edit...** then the **+** button.
-3.  Search for **Unicorn** (usually under "English" or "Others").
-4.  Select it and click **Add**.
-5.  (Optional) Enable **"Use Caps Lock to switch to and from last used input source"** to toggle between Unicorn and your other primary language (e.g., Chinese).
+3.  Search for **Unicorn** and click **Add**.
 
 ---
 
 ## 📖 Technical Documentation
 
 For details on the internal architecture, state machine logic, and the `Engine`/`InputController` separation, please refer to the **[Specification Document](docs/SPECIFICATION.md)**.
-
-## 🧪 Development Commands
-
-*   `unicorn/`
-    *   `Engine.swift`: Core logic implementation.
-    *   `KeyCode.swift`: Event normalization layer.
-    *   `InputController.swift`: Main InputMethodKit controller.
-    *   `keymap.json`: The data source for input sequences.
-*   `unicornTests/`
-    *   `EngineTests.swift`: Unit tests for the engine logic.
-*   `Makefile`: Build automation (run `make help` for all commands).
