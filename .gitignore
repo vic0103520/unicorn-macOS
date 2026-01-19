@@ -1,0 +1,23 @@
+# Xcode and Mac files
+*.mode1v3
+*.pbxuser
+*.tm_build_errors
+*.xcworkspace
+*.perspectivev3
+.DS_Store
+xcuserdata
+build
+*.pkg
+*.dmg
+
+# IDEs and Misc
+._*
+.idea
+.swiftpm
+.vscode
+
+# Project Specific (Unicorn)
+Library/
+dist/
+DerivedData/
+EngineTestsCombined.swift
