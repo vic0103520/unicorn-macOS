@@ -27,7 +27,7 @@
 ### Special Actions
 *   **Backspace:** Deletes the last character in the buffer, reversing the state of the engine.
 *   **Double Backslash:** Typing `\\` commits a single `\` character and exits the mode.
-*   **Stateful Commits (Re-activation):** For sequences like `\==\`, the engine commits the intermediate result (`≡`) and immediately restarts the composition session. This allows for fluid typing of complex symbols like `≡⟨⟩` without re-activating manually.
+*   **Accumulating Composition (Soft Commits):** For sequences like `\==\`, typing a backslash `\` when a symbol is matched will "soft commit" the result (e.g., `≡`) and keep the composition session active. This allows for fluid typing of complex symbols like `≡⟨⟩` without re-activating manually, and ensures compatibility with editor plugins like VSCodeVim.
 
 ---
 
