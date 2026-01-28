@@ -1,182 +1,5 @@
 import Foundation
 
-/// A node in the symbol lookup Trie.
-/// This is a reference type (`final class`) to allow for efficient sharing of subtrees
-/// without deep copying. All properties are immutable (`let`), making it safe to share.
-public final class Trie: Decodable, Equatable {
-    public let candidates: [String]?
-    public let children: [Character: Trie]
-
-    public static func == (lhs: Trie, rhs: Trie) -> Bool {
-        // Structural equality check: identical if they are the same instance (fast path)
-        // or if their contents match.
-        return lhs === rhs || (lhs.candidates == rhs.candidates && lhs.children == rhs.children)
-    }
-
-    struct DynamicKey: CodingKey {
-        var stringValue: String
-        init?(stringValue: String) { self.stringValue = stringValue }
-        var intValue: Int? { return nil }
-        init?(intValue: Int) { return nil }
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: DynamicKey.self)
-        var candidates: [String]?
-        var children: [Character: Trie] = [:]
-
-        for key in container.allKeys {
-            if key.stringValue == ">>" {
-                candidates = try container.decode([String].self, forKey: key)
-            } else if key.stringValue.count == 1, let char = key.stringValue.first {
-                let child = try container.decode(Trie.self, forKey: key)
-                children[char] = child
-            }
-        }
-        self.candidates = candidates
-        self.children = children
-    }
-}
-
-/// Actions produced by the Engine in response to a key event.
-public enum EngineAction: Equatable {
-    case reject
-    case updateComposition(String)
-    case commit(String)
-    case showCandidates(String)
-    case navigate(CandidateNavigation)
-}
-
-public enum CandidateNavigation {
-    case up
-    case down
-    case pageUp
-    case pageDown
-}
-
-/// Manages the state of the candidate list, including selection and paging.
-public struct CandidateWindow: Equatable {
-    public let candidates: [String]
-    public let selectedIndex: Int
-    public let firstVisibleIndex: Int
-    public let pageSize: Int
-
-    public var selectedCandidate: String? {
-        guard candidates.indices.contains(selectedIndex) else { return nil }
-        return candidates[selectedIndex]
-    }
-
-    public var isVisible: Bool {
-        return !candidates.isEmpty
-    }
-
-    public static func empty(pageSize: Int = 9) -> CandidateWindow {
-        return CandidateWindow(
-            candidates: [], selectedIndex: 0, firstVisibleIndex: 0, pageSize: pageSize)
-    }
-
-    public func movingDown() -> CandidateWindow {
-        guard selectedIndex < candidates.count - 1 else { return self }
-        let newSelected = selectedIndex + 1
-        let newFirst =
-            newSelected >= firstVisibleIndex + pageSize
-            ? newSelected - pageSize + 1 : firstVisibleIndex
-
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: newSelected, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
-    }
-
-    public func movingUp() -> CandidateWindow {
-        guard selectedIndex > 0 else { return self }
-        let newSelected = selectedIndex - 1
-        var newFirst = firstVisibleIndex
-        if newSelected < firstVisibleIndex {
-            newFirst = newSelected
-        }
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: newSelected, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
-    }
-
-    public func movingPageDown() -> CandidateWindow {
-        let count = candidates.count
-        var newFirst = firstVisibleIndex + pageSize
-        var newSelected = selectedIndex
-
-        if newFirst < count {
-            newSelected = newFirst  // Logic from InputController: selectionIndex = firstVisibleCandidateIndex
-        } else {
-            newSelected = count - 1
-            newFirst = max(0, count - pageSize)
-        }
-
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: newSelected, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
-    }
-
-    public func movingPageUp() -> CandidateWindow {
-        let delta = selectedIndex - firstVisibleIndex
-        var newFirst = firstVisibleIndex - pageSize
-        if newFirst < 0 { newFirst = 0 }
-
-        let newSelected = selectedIndex < pageSize && newFirst == 0 ? 0 : newFirst + delta
-        // Clamp selection just in case, though logically it should be safe if delta is valid
-        let safeSelected = min(max(0, newSelected), candidates.count - 1)
-
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: safeSelected, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
-    }
-
-    public func selecting(index: Int) -> CandidateWindow {
-        guard candidates.indices.contains(index) else { return self }
-        // Simple selection update, naive scrolling if needed could be added,
-        // but typically direct selection (1-9) assumes visibility or simple jump.
-        // For simplicity, we keep firstVisibleIndex unless selected is out of view.
-        var newFirst = firstVisibleIndex
-        if index < firstVisibleIndex {
-            newFirst = index
-        } else if index >= firstVisibleIndex + pageSize {
-            newFirst = index - pageSize + 1
-        }
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: index, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
-    }
-}
-
-/// Represents the immutable state of the Input Engine at a point in time.
-public struct EngineState: Equatable {
-    /// The sequence of Trie nodes traversed.
-    public let path: [Trie]
-    /// The raw input buffer (e.g., "\lam").
-    public let buffer: String
-    /// The text that has been "soft committed" but is still visually part of the composition.
-    public let committedPrefix: String
-    /// Whether the engine is currently capturing input.
-    public let active: Bool
-
-    public let candidateWindow: CandidateWindow
-
-    public var currentNode: Trie? { path.last }
-    // Convenience proxy
-    public var candidates: [String] { candidateWindow.candidates }
-    public var selectedCandidate: Int { candidateWindow.selectedIndex }
-
-    public init(
-        path: [Trie], buffer: String, committedPrefix: String = "", active: Bool,
-        candidateWindow: CandidateWindow
-    ) {
-        self.path = path
-        self.buffer = buffer
-        self.committedPrefix = committedPrefix
-        self.active = active
-        self.candidateWindow = candidateWindow
-    }
-}
-
 /// The core logic engine for the Unicorn Input Method.
 /// It maintains a state machine that traverses a Trie of symbol sequences.
 public class Engine {
@@ -185,7 +8,7 @@ public class Engine {
     public private(set) var state: EngineState
     /// History of states for undoing soft commits.
     private var history: [EngineState] = []
-    
+
     private let MAX_BUFFER_LENGTH = 50
 
     public var initialState: EngineState {
@@ -339,20 +162,17 @@ public class Engine {
         }
 
         // 1. Try Trie Continuation
-        // We simulate the handleCharacter call logic here to detect rejection without side effects if possible,
-        // or just call it and check the action.
         let (newState, actions) = handleCharacter(state: state, char: char)
-        
+
         // If handleCharacter accepted the input (no reject action), return it.
-        // We check if the last action is .reject
         let isRejected = actions.last == .reject
-        
+
         if !isRejected {
             return (newState, actions)
         }
 
         // 2. If rejected, check for Special Handlers
-        
+
         // A. Backslash Trigger (Soft Commit)
         if char == "\\" {
             return handleBackslash(state: state)
@@ -384,10 +204,7 @@ public class Engine {
     }
 
     private func handleBackslash(state: EngineState) -> (EngineState, [EngineAction]) {
-        // Trigger Logic: The user typed '\' but it's not a continuation.
-        
         if let selected = state.candidateWindow.selectedCandidate {
-            // Soft Commit: We have a match. Keep the session active.
             history.append(state)
             let newCommittedPrefix = state.committedPrefix + selected
             let nextState = EngineState(
@@ -395,7 +212,7 @@ public class Engine {
                 candidateWindow: .empty())
             return (nextState, [.updateComposition(nextState.committedPrefix + nextState.buffer)])
         } else {
-            // Hard Commit: No match for the current buffer. 
+            // Hard Commit: No match for the current buffer.
             // We commit the prefix, the buffer, and the backslash as a single block.
             let fullCommitText = state.committedPrefix + state.buffer + "\\"
             history.removeAll()
@@ -436,7 +253,8 @@ public class Engine {
             candidates: candidates, selectedIndex: 0, firstVisibleIndex: 0, pageSize: 9)
 
         let nextState = EngineState(
-            path: nextPath, buffer: nextBuffer, committedPrefix: state.committedPrefix, active: true,
+            path: nextPath, buffer: nextBuffer, committedPrefix: state.committedPrefix,
+            active: true,
             candidateWindow: window)
         let action: EngineAction =
             nextState.candidates.isEmpty
@@ -491,7 +309,8 @@ public class Engine {
             candidates: candidates, selectedIndex: 0, firstVisibleIndex: 0, pageSize: 9)
 
         let nextState = EngineState(
-            path: nextPath, buffer: nextBuffer, committedPrefix: state.committedPrefix, active: true,
+            path: nextPath, buffer: nextBuffer, committedPrefix: state.committedPrefix,
+            active: true,
             candidateWindow: window)
         let action: EngineAction =
             nextState.candidates.isEmpty

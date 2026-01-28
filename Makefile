@@ -58,6 +58,10 @@ test:
 	@echo "Running Engine Unit Tests..."
 	@cat unicorn/KeyCode.swift > EngineTestsCombined.swift
 	@echo "" >> EngineTestsCombined.swift
+	@cat unicorn/Trie.swift >> EngineTestsCombined.swift
+	@echo "" >> EngineTestsCombined.swift
+	@cat unicorn/EngineTypes.swift >> EngineTestsCombined.swift
+	@echo "" >> EngineTestsCombined.swift
 	@cat unicorn/Engine.swift >> EngineTestsCombined.swift
 	@echo "" >> EngineTestsCombined.swift
 	@cat unicornTests/EngineTests.swift >> EngineTestsCombined.swift

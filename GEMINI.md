@@ -59,6 +59,8 @@ Runs the `EngineTests` suite.
 *   `docs/STYLE_GUIDE.md`: Swift functional programming style guide.
 *   **`unicorn/`**: Source code.
     *   `Engine.swift`: Core logic state machine.
+    *   `EngineTypes.swift`: Data structures (`EngineState`, `CandidateWindow`) and actions.
+    *   `Trie.swift`: Trie data structure for symbol lookups.
     *   `KeyCode.swift`: Input event normalization.
     *   `InputController.swift`: macOS InputMethodKit integration.
     *   `keymap.json`: Symbol data.
