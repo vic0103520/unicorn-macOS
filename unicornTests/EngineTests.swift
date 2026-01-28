@@ -37,6 +37,69 @@ func makeEngine(json: String) -> Engine {
 
 // MARK: - Unit Tests
 
+func testAccumulatingComposition() {
+    print("Test: Accumulating Composition & Backspace Undo")
+    let engine = makeEngine(json: "{\"l\": {\"e\": {\">>\": [\"≤\"]}}}")
+
+    // 1. Type: \le
+    var state = engine.initialState
+    state = engine.reduce(state: state, keyCode: .chars("\\")).0
+    state = engine.reduce(state: state, keyCode: .chars("l")).0
+    let (s3, _) = engine.reduce(state: state, keyCode: .chars("e"))
+    
+    // Check setup state
+    assertEqual(s3.buffer, "\\le", "Buffer should be \\le")
+    assertEqual(s3.committedPrefix, "", "Nothing committed yet")
+
+    // 2. Soft Commit: Type \
+    // Expectation: committedPrefix becomes "≤", buffer becomes "\", active=true
+    let (s4, a4) = engine.reduce(state: s3, keyCode: .chars("\\"))
+    
+    assertTrue(s4.active, "State should remain active")
+    assertEqual(s4.committedPrefix, "≤", "committedPrefix should be ≤")
+    assertEqual(s4.buffer, "\\", "Buffer should start new sequence \\")
+    
+    // Action should be .updateComposition("≤\") NOT .commit + .update
+    if !a4.isEmpty {
+        // The action payload includes prefix + buffer
+        assertEqual(a4[0], EngineAction.updateComposition("≤\\"), "Should update composition with full text")
+        // Ensure no hard commit happened
+        for action in a4 {
+            if case .commit = action {
+                print("FAIL: Should not emit .commit action on soft commit")
+                exit(1)
+            }
+        }
+    }
+
+    // 3. Backspace #1: Delete \
+    // Expectation: committedPrefix "≤", buffer ""
+    let (s5, a5) = engine.reduce(state: s4, keyCode: .backspace)
+    assertEqual(s5.committedPrefix, "≤", "Prefix remains")
+    assertEqual(s5.buffer, "", "Buffer cleared")
+    assertEqual(a5[0], EngineAction.updateComposition("≤"), "Should show prefix")
+
+    // 4. Backspace #2: Undo Soft Commit AND Delete Last Char
+    // Expectation: Restore state before soft commit (\le) AND remove 'e' -> \l
+    let (s6, _) = engine.reduce(state: s5, keyCode: .backspace)
+    assertEqual(s6.buffer, "\\l", "Restored buffer should be \\l (popped \\le and removed e)")
+    assertEqual(s6.committedPrefix, "", "Restored prefix (empty)")
+    
+    // 5. Redo Soft Commit
+    // Type e -> \le
+    let (s7, _) = engine.reduce(state: s6, keyCode: .chars("e"))
+    // Type \ -> ≤\
+    let (s8, _) = engine.reduce(state: s7, keyCode: .chars("\\"))
+    assertEqual(s8.committedPrefix, "≤", "Redo soft commit")
+    
+    // 6. Hard Commit (Enter)
+    // Expectation: Commit "≤\" (prefix + buffer)
+    let (s9, a9) = engine.reduce(state: s8, keyCode: .enter)
+    assertFalse(s9.active, "Should deactivate")
+    assertEqual(a9[0], EngineAction.commit("≤\\"), "Should hard commit full text")
+    assertEqual(s9.committedPrefix, "", "Prefix reset")
+}
+
 func testBasicInput() {
     print("Test: Basic Input Sequence")
     let engine = makeEngine(json: "{\"l\": {\"a\": {\">>\": [\"λ\"]}}}")
@@ -101,18 +164,17 @@ func testSelectionAndBackslashCommit() {
     let (sNext, actions) = engine.reduce(
         state: engine.state, keyCode: .chars("\\"))
 
-    // Should commit L2 and restart
+    // Should soft-commit L2 and restart
     assertTrue(sNext.active, "Should be active (restarted)")
     assertEqual(sNext.buffer, "\\", "Buffer reset to \\")
+    assertEqual(sNext.committedPrefix, "L2", "Prefix should be L2")
 
-    // Verify actions order: Commit L2, then Update \
-    if actions.count >= 2 {
-        assertEqual(actions[0], EngineAction.commit("L2"), "First action should commit L2")
-        assertEqual(
-            actions[1], EngineAction.updateComposition("\\"),
-            "Second action should update composition")
+    // Verify actions: Should be ONE updateComposition with "L2\"
+    if let action = actions.first {
+        assertEqual(action, EngineAction.updateComposition("L2\\"), "Should update composition with accumulated text")
+        assertEqual(actions.count, 1, "Should only have 1 action (no hard commit)")
     } else {
-        print("FAIL: Expected 2 actions, got \(actions.count)")
+        print("FAIL: Expected 1 action, got 0")
         exit(1)
     }
 }

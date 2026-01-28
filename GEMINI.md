@@ -15,9 +15,11 @@ The project follows a **Native macOS Architecture**:
 *   **Location:** `unicorn/Engine.swift`
 *   **Responsibility:**
     *   Loads and traverses the Trie from `keymap.json`.
-    *   Manages the state machine (buffer, active status, candidates).
+    *   Manages the state machine (buffer, active status, candidates, committed prefix).
+    *   Maintains a state history for Undo operations.
     *   Determines actions (`Commit`, `Update`, `Reject`) based on input.
     *   **Deterministic:** Contains no UI or system dependency code.
+    *   **Accumulating Composition:** Uses a "Soft Commit" strategy to keep the composition session active during symbol commits, preventing race conditions in apps like VSCodeVim.
 
 ### 2. KeyCode (Swift)
 *   **Role:** Event Normalization.

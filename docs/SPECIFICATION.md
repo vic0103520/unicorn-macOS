@@ -22,7 +22,10 @@ When a key is pressed, it is converted to a `KeyCode` and passed to `Engine.proc
 ### A. Navigation & Control
 *   **Arrows:** Update the internal selection state (`CandidateWindow`). Returns `.navigate` action.
 *   **Enter:** Commits the current selection or buffer.
-*   **Backspace:** Removes the last character from the buffer. If empty, deactivates.
+*   **Backspace:**
+    *   **Standard:** Removes the last character from the buffer.
+    *   **Undo:** If the buffer becomes empty and there is history from a previous "Soft Commit", restores the previous state.
+    *   **Deactivate:** If the buffer is empty and history is empty, deactivates.
 
 ### B. Trie Continuation
 The engine checks if the key extends the current buffer to a valid path in the Keymap (Trie).
@@ -32,15 +35,19 @@ The engine checks if the key extends the current buffer to a valid path in the K
     *   **Single Candidate:** The candidate is automatically **Committed**.
     *   **No Candidate:** The raw buffer is **Committed**.
 
-### C. Candidate Selection (Numeric)
+### C. Special Keys (`\`)
+If the key is not a valid Trie continuation, the engine checks for the Backslash trigger.
+*   **Backslash (`\`):**
+    *   Acts as a **Sequence Terminator** and **Soft Commit** command.
+    *   **Logic:**
+        *   **If Symbol Selected:** Soft-commits the selected candidate (moves to `committedPrefix`).
+        *   **If No Match:** Hard-commits the `committedPrefix` + `buffer` + `\` (mimicking a Reject).
+    *   **Result:** Starts a new sequence with `\` in the buffer. If a Soft Commit occurred, the composition session remains continuously active.
+
+### D. Candidate Selection (Numeric)
 If the key is a digit (1-9) AND candidates are currently visible:
 *   The key acts as a selection command.
 *   **Action:** The candidate at the corresponding index is **Committed**, and the engine resets.
-
-### D. Special Keys (`\`)
-*   **Backslash (`\`):**
-    *   Acts as a "Commit & Restart" command.
-    *   Commits the currently selected candidate (or raw buffer) and immediately starts a new active session with `\` as the buffer.
 
 ### E. Implicit Commit (Rejection Logic)
 If the key is not a valid Trie continuation, not a control key, and not a selection command:

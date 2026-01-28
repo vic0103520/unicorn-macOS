@@ -153,6 +153,8 @@ public struct EngineState: Equatable {
     public let path: [Trie]
     /// The raw input buffer (e.g., "\lam").
     public let buffer: String
+    /// The text that has been "soft committed" but is still visually part of the composition.
+    public let committedPrefix: String
     /// Whether the engine is currently capturing input.
     public let active: Bool
 
@@ -163,9 +165,13 @@ public struct EngineState: Equatable {
     public var candidates: [String] { candidateWindow.candidates }
     public var selectedCandidate: Int { candidateWindow.selectedIndex }
 
-    public init(path: [Trie], buffer: String, active: Bool, candidateWindow: CandidateWindow) {
+    public init(
+        path: [Trie], buffer: String, committedPrefix: String = "", active: Bool,
+        candidateWindow: CandidateWindow
+    ) {
         self.path = path
         self.buffer = buffer
+        self.committedPrefix = committedPrefix
         self.active = active
         self.candidateWindow = candidateWindow
     }
@@ -177,6 +183,8 @@ public class Engine {
     public let root: Trie
     /// The current state. This is the only mutable property in the class.
     public private(set) var state: EngineState
+    /// History of states for undoing soft commits.
+    private var history: [EngineState] = []
     
     private let MAX_BUFFER_LENGTH = 50
 
@@ -207,7 +215,8 @@ public class Engine {
         case .pageDown: newWindow = state.candidateWindow.movingPageDown()
         }
         state = EngineState(
-            path: state.path, buffer: state.buffer, active: state.active, candidateWindow: newWindow
+            path: state.path, buffer: state.buffer, committedPrefix: state.committedPrefix,
+            active: state.active, candidateWindow: newWindow
         )
     }
 
@@ -218,6 +227,7 @@ public class Engine {
         state = EngineState(
             path: state.path,
             buffer: state.buffer,
+            committedPrefix: state.committedPrefix,
             active: state.active,
             candidateWindow: newWindow
         )
@@ -230,6 +240,7 @@ public class Engine {
     /// Resets the engine to its initial inactive state.
     public func deactivate() {
         state = resetState(active: false, buffer: "")
+        history.removeAll()
     }
 
     /// Imperative shell method that updates the internal state and returns actions.
@@ -253,21 +264,27 @@ public class Engine {
     /// Helper to create a fresh state starting at the root.
     private func resetState(active: Bool, buffer: String) -> EngineState {
         // When resetting, candidates should be derived from the new path (which is just root)
-        return EngineState(path: [root], buffer: buffer, active: active, candidateWindow: .empty())
+        return EngineState(
+            path: [root], buffer: buffer, committedPrefix: "", active: active,
+            candidateWindow: .empty())
     }
 
     /// Helper to perform an implicit commit (commit best match and reset).
     /// Used when the sequence is interrupted (e.g. by space or invalid char).
     private func implicitCommit(_ state: EngineState) -> (EngineState, [EngineAction]) {
         let text = state.candidateWindow.selectedCandidate ?? state.candidates.first ?? state.buffer
-        return (resetState(active: false, buffer: ""), [.commit(text)])
+        let fullCommitText = state.committedPrefix + text
+        // Side effect: Clear history on implicit commit
+        history.removeAll()
+        return (resetState(active: false, buffer: ""), [.commit(fullCommitText)])
     }
 
     /// Pure transition function: (State, Input) -> (NewState, [Action])
     public func reduce(state: EngineState, keyCode: KeyCode) -> (EngineState, [EngineAction]) {
         let move = { (newWindow, direction) -> (EngineState, [EngineAction]) in
             let nextState = EngineState(
-                path: state.path, buffer: state.buffer, active: state.active,
+                path: state.path, buffer: state.buffer, committedPrefix: state.committedPrefix,
+                active: state.active,
                 candidateWindow: newWindow)
             return (nextState, [.navigate(direction)])
         }
@@ -285,11 +302,15 @@ public class Engine {
         case .enter:
             if state.candidateWindow.isVisible {
                 if let selected = state.candidateWindow.selectedCandidate {
-                    return (resetState(active: false, buffer: ""), [.commit(selected)])
+                    let fullCommitText = state.committedPrefix + selected
+                    history.removeAll()
+                    return (resetState(active: false, buffer: ""), [.commit(fullCommitText)])
                 }
             } else if !state.buffer.isEmpty {
                 // Enter with buffer but no candidates -> Commit buffer
-                return (resetState(active: false, buffer: ""), [.commit(state.buffer)])
+                let fullCommitText = state.committedPrefix + state.buffer
+                history.removeAll()
+                return (resetState(active: false, buffer: ""), [.commit(fullCommitText)])
             }
             return (state, [.reject])
 
@@ -317,20 +338,39 @@ public class Engine {
             return handleInactiveState(state: state, char: char)
         }
 
-        // Candidate selection by number (1-9)
-        if state.candidateWindow.isVisible,
-            let digit = Int(String(char)), digit >= 1, digit <= 9 {
-            let index = state.candidateWindow.firstVisibleIndex + digit - 1
-            if index < state.candidates.count {
-                return (resetState(active: false, buffer: ""), [.commit(state.candidates[index])])
-            }
+        // 1. Try Trie Continuation
+        // We simulate the handleCharacter call logic here to detect rejection without side effects if possible,
+        // or just call it and check the action.
+        let (newState, actions) = handleCharacter(state: state, char: char)
+        
+        // If handleCharacter accepted the input (no reject action), return it.
+        // We check if the last action is .reject
+        let isRejected = actions.last == .reject
+        
+        if !isRejected {
+            return (newState, actions)
         }
 
+        // 2. If rejected, check for Special Handlers
+        
+        // A. Backslash Trigger (Soft Commit)
         if char == "\\" {
             return handleBackslash(state: state)
         }
 
-        return handleCharacter(state: state, char: char)
+        // B. Candidate Selection (1-9)
+        if state.candidateWindow.isVisible,
+            let digit = Int(String(char)), digit >= 1, digit <= 9 {
+            let index = state.candidateWindow.firstVisibleIndex + digit - 1
+            if index < state.candidates.count {
+                let text = state.committedPrefix + state.candidates[index]
+                history.removeAll()
+                return (resetState(active: false, buffer: ""), [.commit(text)])
+            }
+        }
+
+        // 3. Fallback: Return the original rejection (Implicit Commit)
+        return (newState, actions)
     }
 
     private func handleInactiveState(state: EngineState, char: Character) -> (
@@ -344,29 +384,51 @@ public class Engine {
     }
 
     private func handleBackslash(state: EngineState) -> (EngineState, [EngineAction]) {
-        let text: String
-        if state.buffer == "\\" {
-            text = "\\"
-        } else if let selected = state.candidateWindow.selectedCandidate {
-            text = selected
+        // Trigger Logic: The user typed '\' but it's not a continuation.
+        
+        if let selected = state.candidateWindow.selectedCandidate {
+            // Soft Commit: We have a match. Keep the session active.
+            history.append(state)
+            let newCommittedPrefix = state.committedPrefix + selected
+            let nextState = EngineState(
+                path: [root], buffer: "\\", committedPrefix: newCommittedPrefix, active: true,
+                candidateWindow: .empty())
+            return (nextState, [.updateComposition(nextState.committedPrefix + nextState.buffer)])
         } else {
-            text = state.buffer
+            // Hard Commit: No match for the current buffer. 
+            // We commit the prefix, the buffer, and the backslash as a single block.
+            let fullCommitText = state.committedPrefix + state.buffer + "\\"
+            history.removeAll()
+            return (resetState(active: false, buffer: ""), [.commit(fullCommitText)])
         }
-
-        let nextState = resetState(active: true, buffer: "\\")
-        // Commit text and then update composition with new state
-        return (nextState, [.commit(text), .updateComposition(nextState.buffer)])
     }
 
     private func handleBackspace(state: EngineState) -> (EngineState, [EngineAction]) {
-        if state.buffer.isEmpty || state.buffer == "\\" {
-            return (resetState(active: false, buffer: ""), [.updateComposition("")])
+        // 1. If buffer is empty, try to Undo from history
+        if state.buffer.isEmpty {
+            if !history.isEmpty {
+                let restoredState = history.removeLast()
+                return deleteLastChar(state: restoredState)
+            } else {
+                // No history, empty buffer -> Close session
+                return (resetState(active: false, buffer: ""), [.updateComposition("")])
+            }
         }
 
+        // 2. Standard backspace: Remove last char from buffer
+        return deleteLastChar(state: state)
+    }
+
+    private func deleteLastChar(state: EngineState) -> (EngineState, [EngineAction]) {
         var nextPath = state.path
         var nextBuffer = state.buffer
         if !nextBuffer.isEmpty { nextBuffer.removeLast() }
         if nextPath.count > 1 { nextPath.removeLast() }
+
+        // If everything is empty, deactivate immediately
+        if nextBuffer.isEmpty && state.committedPrefix.isEmpty && history.isEmpty {
+            return (resetState(active: false, buffer: ""), [.updateComposition("")])
+        }
 
         // Determine candidates for the new state
         let candidates = nextPath.last?.candidates ?? []
@@ -374,10 +436,12 @@ public class Engine {
             candidates: candidates, selectedIndex: 0, firstVisibleIndex: 0, pageSize: 9)
 
         let nextState = EngineState(
-            path: nextPath, buffer: nextBuffer, active: true, candidateWindow: window)
+            path: nextPath, buffer: nextBuffer, committedPrefix: state.committedPrefix, active: true,
+            candidateWindow: window)
         let action: EngineAction =
             nextState.candidates.isEmpty
-            ? .updateComposition(nextState.buffer) : .showCandidates(nextState.buffer)
+            ? .updateComposition(nextState.committedPrefix + nextState.buffer)
+            : .showCandidates(nextState.committedPrefix + nextState.buffer)
         return (nextState, [action])
     }
 
@@ -416,7 +480,9 @@ public class Engine {
             }
 
             if !text.isEmpty {
-                return (resetState(active: false, buffer: ""), [.commit(text)])
+                let fullCommitText = state.committedPrefix + text
+                history.removeAll()
+                return (resetState(active: false, buffer: ""), [.commit(fullCommitText)])
             }
         }
 
@@ -425,10 +491,12 @@ public class Engine {
             candidates: candidates, selectedIndex: 0, firstVisibleIndex: 0, pageSize: 9)
 
         let nextState = EngineState(
-            path: nextPath, buffer: nextBuffer, active: true, candidateWindow: window)
+            path: nextPath, buffer: nextBuffer, committedPrefix: state.committedPrefix, active: true,
+            candidateWindow: window)
         let action: EngineAction =
             nextState.candidates.isEmpty
-            ? .updateComposition(nextState.buffer) : .showCandidates(nextState.buffer)
+            ? .updateComposition(nextState.committedPrefix + nextState.buffer)
+            : .showCandidates(nextState.committedPrefix + nextState.buffer)
         return (nextState, [action])
     }
 }
