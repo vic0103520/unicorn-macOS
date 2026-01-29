@@ -8,7 +8,7 @@ CONFIG = Release
 APP_BUNDLE = $(PWD)/Library/Input Methods/$(CONFIG)/$(APP_NAME).app
 INSTALL_DIR = $(HOME)/Library/Input Methods
 
-.PHONY: all build install build-debug install-debug clean test lint format
+.PHONY: all build install build-debug install-debug clean test lint format coverage
 
 all: build
 
@@ -56,7 +56,9 @@ clean:
 # Run Engine tests
 test:
 	@echo "Running Engine Unit Tests..."
-	@cat unicorn/KeyCode.swift > EngineTestsCombined.swift
+	@cat unicorn/FunctionalHelpers.swift > EngineTestsCombined.swift
+	@echo "" >> EngineTestsCombined.swift
+	@cat unicorn/KeyCode.swift >> EngineTestsCombined.swift
 	@echo "" >> EngineTestsCombined.swift
 	@cat unicorn/Trie.swift >> EngineTestsCombined.swift
 	@echo "" >> EngineTestsCombined.swift
@@ -67,3 +69,13 @@ test:
 	@cat unicornTests/EngineTests.swift >> EngineTestsCombined.swift
 	@swift EngineTestsCombined.swift
 	@rm EngineTestsCombined.swift
+
+# Check test coverage
+coverage:
+	@echo "Generating Test Coverage Report..."
+	@(cat unicorn/FunctionalHelpers.swift; echo ""; cat unicorn/KeyCode.swift; echo ""; cat unicorn/Trie.swift; echo ""; cat unicorn/EngineTypes.swift; echo ""; cat unicorn/Engine.swift; echo ""; cat unicornTests/EngineTests.swift) > CoverageCombined.swift
+	@swiftc -profile-generate -profile-coverage-mapping CoverageCombined.swift -o CoverageRunner
+	@./CoverageRunner > /dev/null
+	@xcrun llvm-profdata merge -sparse default.profraw -o default.profdata
+	@xcrun llvm-cov report ./CoverageRunner -instr-profile=default.profdata
+	@rm CoverageCombined.swift CoverageRunner default.profraw default.profdata

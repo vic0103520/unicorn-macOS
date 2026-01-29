@@ -1,12 +1,20 @@
 import Foundation
 
 /// Actions produced by the Engine in response to a key event.
+/// These represent "Intents" that the Shell must execute.
 public enum EngineAction: Equatable {
+    /// The engine does not handle this key; let the system handle it.
     case reject
-    case updateComposition(String)
-    case commit(String)
-    case showCandidates(String)
+
+    /// The internal state has changed.
+    /// The UI should sync itself with the current Presentation Model.
+    case sync
+
+    /// Explicit instruction to move the candidate selection in the UI.
     case navigate(CandidateNavigation)
+
+    /// A terminal action: insert the provided text and usually reset the engine.
+    case commit(String)
 }
 
 public enum CandidateNavigation {
@@ -37,6 +45,21 @@ public struct CandidateWindow: Equatable {
             candidates: [], selectedIndex: 0, firstVisibleIndex: 0, pageSize: pageSize)
     }
 
+    /// Functional update helper.
+    public func updating(
+        candidates: [String]? = nil,
+        selectedIndex: Int? = nil,
+        firstVisibleIndex: Int? = nil,
+        pageSize: Int? = nil
+    ) -> CandidateWindow {
+        return CandidateWindow(
+            candidates: candidates ?? self.candidates,
+            selectedIndex: selectedIndex ?? self.selectedIndex,
+            firstVisibleIndex: firstVisibleIndex ?? self.firstVisibleIndex,
+            pageSize: pageSize ?? self.pageSize
+        )
+    }
+
     public func movingDown() -> CandidateWindow {
         guard selectedIndex < candidates.count - 1 else { return self }
         let newSelected = selectedIndex + 1
@@ -44,9 +67,7 @@ public struct CandidateWindow: Equatable {
             newSelected >= firstVisibleIndex + pageSize
             ? newSelected - pageSize + 1 : firstVisibleIndex
 
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: newSelected, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
+        return updating(selectedIndex: newSelected, firstVisibleIndex: newFirst)
     }
 
     public func movingUp() -> CandidateWindow {
@@ -56,9 +77,7 @@ public struct CandidateWindow: Equatable {
         if newSelected < firstVisibleIndex {
             newFirst = newSelected
         }
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: newSelected, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
+        return updating(selectedIndex: newSelected, firstVisibleIndex: newFirst)
     }
 
     public func movingPageDown() -> CandidateWindow {
@@ -67,15 +86,13 @@ public struct CandidateWindow: Equatable {
         var newSelected = selectedIndex
 
         if newFirst < count {
-            newSelected = newFirst  // Logic from InputController: selectionIndex = firstVisibleCandidateIndex
+            newSelected = newFirst
         } else {
             newSelected = count - 1
             newFirst = max(0, count - pageSize)
         }
 
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: newSelected, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
+        return updating(selectedIndex: newSelected, firstVisibleIndex: newFirst)
     }
 
     public func movingPageUp() -> CandidateWindow {
@@ -84,28 +101,20 @@ public struct CandidateWindow: Equatable {
         if newFirst < 0 { newFirst = 0 }
 
         let newSelected = selectedIndex < pageSize && newFirst == 0 ? 0 : newFirst + delta
-        // Clamp selection just in case, though logically it should be safe if delta is valid
         let safeSelected = min(max(0, newSelected), candidates.count - 1)
 
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: safeSelected, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
+        return updating(selectedIndex: safeSelected, firstVisibleIndex: newFirst)
     }
 
     public func selecting(index: Int) -> CandidateWindow {
         guard candidates.indices.contains(index) else { return self }
-        // Simple selection update, naive scrolling if needed could be added,
-        // but typically direct selection (1-9) assumes visibility or simple jump.
-        // For simplicity, we keep firstVisibleIndex unless selected is out of view.
         var newFirst = firstVisibleIndex
         if index < firstVisibleIndex {
             newFirst = index
         } else if index >= firstVisibleIndex + pageSize {
             newFirst = index - pageSize + 1
         }
-        return CandidateWindow(
-            candidates: candidates, selectedIndex: index, firstVisibleIndex: newFirst,
-            pageSize: pageSize)
+        return updating(selectedIndex: index, firstVisibleIndex: newFirst)
     }
 }
 
@@ -122,19 +131,81 @@ public struct EngineState: Equatable {
 
     public let candidateWindow: CandidateWindow
 
+    /// Persistent history stack for universal undo.
+    public let history: [EngineState]
+
     public var currentNode: Trie? { path.last }
-    // Convenience proxy
-    public var candidates: [String] { candidateWindow.candidates }
-    public var selectedCandidate: Int { candidateWindow.selectedIndex }
+
+    // MARK: - Initializer
 
     public init(
-        path: [Trie], buffer: String, committedPrefix: String = "", active: Bool,
-        candidateWindow: CandidateWindow
+        path: [Trie],
+        buffer: String,
+        committedPrefix: String = "",
+        active: Bool,
+        candidateWindow: CandidateWindow,
+        history: [EngineState] = []
     ) {
         self.path = path
         self.buffer = buffer
         self.committedPrefix = committedPrefix
         self.active = active
         self.candidateWindow = candidateWindow
+        self.history = history
+    }
+
+    // MARK: - Functional Updates
+
+    /// Returns a new state by applying specified updates to the current state.
+    public func updating(
+        path: [Trie]? = nil,
+        buffer: String? = nil,
+        committedPrefix: String? = nil,
+        active: Bool? = nil,
+        candidateWindow: CandidateWindow? = nil,
+        history: [EngineState]? = nil
+    ) -> EngineState {
+        return EngineState(
+            path: path ?? self.path,
+            buffer: buffer ?? self.buffer,
+            committedPrefix: committedPrefix ?? self.committedPrefix,
+            active: active ?? self.active,
+            candidateWindow: candidateWindow ?? self.candidateWindow,
+            history: history ?? self.history
+        )
+    }
+
+    /// Returns a copy of the state with an empty history array.
+    /// Used when pushing snapshots into the history stack to prevent recursive memory growth.
+    public func clearHistory() -> EngineState {
+        return updating(history: [])
+    }
+
+    // MARK: - Presentation Model (Tier 2)
+
+    /// Returns the full text to be displayed in the marked (composition) area.
+    public func compositionText() -> String {
+        return committedPrefix + buffer
+    }
+
+    /// Returns the cursor position/range within the composition.
+    public func selectionRange() -> NSRange {
+        let text = compositionText()
+        return NSRange(location: text.count, length: 0)
+    }
+
+    /// Determines if the candidate window should be displayed.
+    public func shouldShowCandidates() -> Bool {
+        return active && !candidateWindow.candidates.isEmpty
+    }
+
+    /// Returns the currently selected candidate index.
+    public func selectedCandidateIndex() -> Int {
+        return candidateWindow.selectedIndex
+    }
+
+    /// Returns the list of candidates to display.
+    public func candidates() -> [String] {
+        return candidateWindow.candidates
     }
 }

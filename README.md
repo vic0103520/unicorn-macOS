@@ -25,9 +25,17 @@
 *   **Implicit Commit:** If you type a character that is NOT part of a valid sequence (e.g., typing `.` after `\lambda`), Unicorn will automatically commit the best match (`λ`) and then insert the new character (`.`), resulting in `λ.`.
 
 ### Special Actions
-*   **Backspace:** Deletes the last character in the buffer, reversing the state of the engine.
+*   **Backspace (Universal Undo):** Reverts the composition to the exact previous state (character-by-character or undoing a soft commit).
 *   **Double Backslash:** Typing `\\` commits a single `\` character and exits the mode.
 *   **Accumulating Composition (Soft Commits):** For sequences like `\==\`, typing a backslash `\` when a symbol is matched will "soft commit" the result (e.g., `≡`) and keep the composition session active. This allows for fluid typing of complex symbols like `≡⟨⟩` without re-activating manually, and ensures compatibility with editor plugins like VSCodeVim.
+
+---
+
+## 🏗 Architecture
+
+Unicorn is designed with a **Pure Core, Impure Shell** architecture:
+*   **Pure Core:** The logical engine and presentation models are deterministic and state-isolated, ensuring high reliability and easy testing.
+*   **Impure Shell:** A thin layer that interfaces with macOS `InputMethodKit`, handling side effects and system events.
 
 ---
 

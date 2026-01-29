@@ -33,95 +33,58 @@ import os
     }
 
     // MARK: - Event Handling
+    
     @objc(handleEvent:client:)
     public override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-        guard let event = event else { return false }
-        guard let engine = self.engine else { return false }
-
-        // 1. Convert to KeyCode
-        guard let keyCode = KeyCode(event: event) else {
-            return false  // Let system handle (Shortcuts, etc)
+        guard let event = event, 
+              let engine = self.engine,
+              let keyCode = KeyCode(event: event) else { 
+            return false 
         }
 
-        // 2. Process Key
-        // The engine now handles implicit commits internally.
-        // It returns [.commit(text), .reject] if an active sequence is interrupted.
         let actions = engine.processKey(keyCode: keyCode)
-
-        if actions.isEmpty {
-            return false
-        }
+        if actions.isEmpty { return false }
 
         guard let client = sender as? IMKTextInput else { return true }
 
-        // 3. Process Actions
         var shouldConsumeEvent = true
 
         for action in actions {
             switch action {
             case .reject:
-                // If the engine rejects the key, we should let the system handle it.
-                // This happens in two cases:
-                // a) Inactive + Key (e.g. typing 'a') -> .reject -> System inserts 'a'.
-                // b) Active + Invalid Key (e.g. '\lamb' + 'x') -> [.commit('λ'), .reject] -> System inserts 'x' after commit.
                 shouldConsumeEvent = false
-
-            case .updateComposition(let text):
-                handleUpdate(text, showCandidates: false, client: client)
-
-            case .showCandidates(let text):
-                handleUpdate(text, showCandidates: true, client: client)
-
-            case .commit(let text):
-                commitText(text, client: client, shouldDeactivate: false)
-
+            case .sync:
+                syncUI(with: engine.state, client: client)
             case .navigate(let direction):
-                switch direction {
-                case .up: candidatesWindow?.moveUp(nil)
-                case .down: candidatesWindow?.moveDown(nil)
-                case .pageUp: candidatesWindow?.moveLeft(nil)
-                case .pageDown: candidatesWindow?.moveRight(nil)
-                }
+                handleNavigation(direction)
+            case .commit(let text):
+                commitText(text, client: client)
             }
         }
 
         return shouldConsumeEvent
     }
 
-    public override func inputText(_ string: String!, client sender: Any!) -> Bool {
-        return false
-    }
-
-    private func handleActions(_ actions: [EngineAction], client: IMKTextInput) {
-        for action in actions {
-            switch action {
-            case .reject:
-                break  // Should be handled by caller if needed
-            case .updateComposition(let text):
-                handleUpdate(text, showCandidates: false, client: client)
-            case .showCandidates(let text):
-                handleUpdate(text, showCandidates: true, client: client)
-            case .commit(let text):
-                commitText(text, client: client, shouldDeactivate: false)
-            case .navigate(let direction):
-                // Engine state already updated. Just sync UI.
-                switch direction {
-                case .up: candidatesWindow?.moveUp(nil)
-                case .down: candidatesWindow?.moveDown(nil)
-                case .pageUp: candidatesWindow?.moveLeft(nil)  // Left is PageUp in this UI
-                case .pageDown: candidatesWindow?.moveRight(nil)
-                }
-            }
+    /// Handles explicit navigation commands for the candidate window.
+    private func handleNavigation(_ direction: CandidateNavigation) {
+        switch direction {
+        case .up: candidatesWindow?.moveUp(nil)
+        case .down: candidatesWindow?.moveDown(nil)
+        case .pageUp: candidatesWindow?.moveLeft(nil) // IMK uses Left for PageUp in vertical panels
+        case .pageDown: candidatesWindow?.moveRight(nil)
         }
     }
 
-    private func handleUpdate(_ text: String, showCandidates: Bool, client: IMKTextInput) {
+    /// Synchronizes the macOS UI with the Engine's Presentation Model.
+    private func syncUI(with state: EngineState, client: IMKTextInput) {
+        // Tier 3: Framework Glue - Map presentation functions to system APIs
         client.setMarkedText(
-            text,
-            selectionRange: NSRange(location: text.count, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
+            state.compositionText(),
+            selectionRange: state.selectionRange(),
+            replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
+        )
 
-        if showCandidates {
+        if state.shouldShowCandidates() {
             candidatesWindow?.update()
             candidatesWindow?.show()
         } else {
@@ -129,21 +92,22 @@ import os
         }
     }
 
-    private func commitText(_ text: String, client: IMKTextInput?, shouldDeactivate: Bool = true) {
-        client?.insertText(
-            text, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
+    private func commitText(_ text: String, client: IMKTextInput) {
+        client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: NSNotFound))
         candidatesWindow?.hide()
-        if shouldDeactivate {
-            engine?.deactivate()
-        }
+        // Note: Engine state is already reset by the Engine when it returns .commit
     }
 
     public override func candidates(_ sender: Any!) -> [Any]! {
-        return engine?.getCandidates() ?? []
+        return engine?.state.candidates() ?? []
     }
 
     public override func candidateSelected(_ candidateString: NSAttributedString!) {
         guard let client = client() else { return }
+        // When a candidate is clicked, we commit it.
+        // We'll let the engine state catch up on the next sync if needed, 
+        // but typically IMK handles candidate selection by calling this.
         commitText(candidateString.string, client: client)
+        engine?.deactivate()
     }
 }
