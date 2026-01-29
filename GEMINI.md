@@ -37,6 +37,15 @@ The project follows a **Native macOS Architecture**:
     *   Forwards input to `Engine`.
     *   Renders the Candidate Window and Composition Text.
 
+## Coding Standards
+All Swift code in this project must strictly adhere to the **Practical Functional Swift** approach defined in `docs/STYLE_GUIDE.md`.
+
+**Mandatory Principles:**
+*   **Immutability:** Use `let` and immutable structs/enums by default.
+*   **Three-Tier Architecture:** Keep logic pure in the `Engine`, put UI calculations in `Extensions`, and use `InputController` as a "dumb" effect shell.
+*   **Controlled Mutation:** Limit `var` to local accumulators or the central `Engine.state`.
+*   **Computation Flow:** Use the `|>` (pipeline) and `>>=` (bind) operators for clear, monadic data transformations.
+
 ## Building and Running
 
 The project is a standard Xcode project wrapped with a Makefile for convenience.
