@@ -3,42 +3,42 @@
 ## Overview
 **Unicorn** is a native macOS Unicode Input Method designed to allow easy insertion of Agda and Unicode symbols (e.g., typing `\lambda` to get `λ`).
 
-The project follows a **Native macOS Architecture**:
+The project follows a **Pure Core, Impure Shell** architecture:
 *   **Language:** Written entirely in **Swift**.
 *   **Frameworks:** Built on `InputMethodKit` (macOS) and `XCTest`.
-*   **Design:** Separates pure logic (`Engine`) from system effects (`InputController`).
 
 ## Architecture
 
-### 1. Engine (Swift)
+The project is structured into three tiers:
+
+### 1. Tier 1: Domain Logic (Engine)
 *   **Role:** The brain of the input method. Pure logic.
 *   **Location:** `unicorn/Engine.swift`
 *   **Responsibility:**
     *   Loads and traverses the Trie from `keymap.json`.
     *   Manages the state machine (buffer, active status, candidates, committed prefix).
     *   Maintains a state history for Undo operations.
-    *   Determines actions (`Commit`, `Update`, `Reject`) based on input.
+    *   Determines semantic actions (`sync`, `navigate`, `commit`, `reject`) based on input.
     *   **Deterministic:** Contains no UI or system dependency code.
-    *   **Accumulating Composition:** Uses a "Soft Commit" strategy to keep the composition session active during symbol commits, preventing race conditions in apps like VSCodeVim.
 
-### 2. KeyCode (Swift)
-*   **Role:** Event Normalization.
-*   **Location:** `unicorn/KeyCode.swift`
+### 2. Tier 2: Presentation Model (EngineState Extensions)
+*   **Role:** Bridge between logic and effects.
+*   **Location:** `unicorn/EngineTypes.swift`
 *   **Responsibility:**
-    *   Maps raw `NSEvent` key codes and modifiers to a type-safe `KeyCode` enum.
-    *   Enforces standard macOS text input rules (e.g. ignoring Command/Control shortcuts).
+    *   Calculates UI-specific data (e.g., `compositionText()`, `selectionRange()`).
+    *   Pure functions that transform domain state into "UI-ready" data for macOS APIs.
 
-### 3. InputController (Swift)
+### 3. Tier 3: Framework Glue (InputController)
 *   **Role:** The system shell. Handles the "Effects".
 *   **Location:** `unicorn/InputController.swift`
 *   **Responsibility:**
     *   Implements `IMKInputController`.
-    *   Intercepts key events from macOS.
+    *   Intercepts key events and normalizes them via `KeyCode.swift`.
     *   Forwards input to `Engine`.
-    *   Renders the Candidate Window and Composition Text.
+    *   Maps state data to `IMKTextInput` and `IMKCandidates`.
 
 ## Coding Standards
-All Swift code in this project must strictly adhere to the **Practical Functional Swift** approach defined in `docs/STYLE_GUIDE.md`.
+All Swift code in this project must strictly adhere to the **Functional Swift** approach defined in `docs/STYLE_GUIDE.md`.
 
 **Mandatory Principles:**
 *   **Immutability:** Use `let` and immutable structs/enums by default.
@@ -62,22 +62,29 @@ make test
 ```
 Runs the `EngineTests` suite.
 
+**Check Coverage:**
+```bash
+make coverage
+```
+Generates a detailed line coverage report for the Engine logic.
+
 ## Key Files & Directories
 
 *   `docs/SPECIFICATION.md`: Detailed architectural and behavioral specification.
 *   `docs/STYLE_GUIDE.md`: Swift functional programming style guide.
 *   **`unicorn/`**: Source code.
     *   `Engine.swift`: Core logic state machine.
-    *   `EngineTypes.swift`: Data structures (`EngineState`, `CandidateWindow`) and actions.
+    *   `EngineTypes.swift`: Data structures (`EngineState`, `CandidateWindow`) and Presentation Model.
+    *   `FunctionalHelpers.swift`: Generic functional operators (`|>`, `>>=`).
     *   `Trie.swift`: Trie data structure for symbol lookups.
     *   `KeyCode.swift`: Input event normalization.
     *   `InputController.swift`: macOS InputMethodKit integration.
     *   `keymap.json`: Symbol data.
 *   **`unicornTests/`**: Unit tests.
-    *   `EngineTests.swift`: Tests for `Engine` logic.
+    *   `EngineTests.swift`: Tests for `Engine` logic and Presentation Model.
 *   `Makefile`: Build automation.
 
 **Key Summary:**
-*   **Architecture:** Separation of concerns is paramount. Logic lives in `Engine.swift` (Pure), Normalization in `KeyCode.swift`, UI in `InputController.swift` (Effects).
-*   **State:** The `Engine` is the single source of truth.
-*   **Testing:** Logic sequences must be covered by unit tests in `unicornTests/EngineTests.swift`.
+*   **Architecture:** Three-Tier architecture (Domain -> Presentation -> Effect).
+*   **State:** The `Engine` is the source of truth; `EngineState` provides the view.
+*   **Testing:** Logic and Presentation Model verified by unit tests in `unicornTests/EngineTests.swift`.
