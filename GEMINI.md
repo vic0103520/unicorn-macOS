@@ -48,7 +48,9 @@ All Swift code in this project must strictly adhere to the **Functional Swift** 
 
 ## Building and Running
 
-The project is a standard Xcode project wrapped with a Makefile for convenience.
+The project is a standard Xcode project wrapped with a Makefile for convenience. All builds are automatically ad-hoc signed (`-`) to ensure compatibility with modern macOS security requirements. 
+
+**Note on Security:** Because the project is not notarized by Apple, users will encounter "Unverified Developer" or "Damaged" warnings. Distribution includes an `install.sh` script to handle Gatekeeper bypass and installation while providing necessary security disclosures.
 
 **Build & Install:**
 ```bash
@@ -72,6 +74,7 @@ Generates a detailed line coverage report for the Engine logic.
 
 *   `docs/SPECIFICATION.md`: Detailed architectural and behavioral specification.
 *   `docs/STYLE_GUIDE.md`: Swift functional programming style guide.
+*   **`install.sh`**: One-click installer for pre-built binaries (handles Gatekeeper bypass).
 *   **`unicorn/`**: Source code.
     *   `Engine.swift`: Core logic state machine.
     *   `EngineTypes.swift`: Data structures (`EngineState`, `CandidateWindow`) and Presentation Model.

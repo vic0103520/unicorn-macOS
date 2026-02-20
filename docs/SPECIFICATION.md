@@ -66,3 +66,15 @@ If the key is not a valid Trie continuation, not a control key, and not a select
     *   The Engine enforces a hard limit on the input buffer size.
     *   **Constraint:** `MAX_BUFFER_LENGTH = 50` characters.
     *   **Behavior:** If the buffer reaches this limit, the engine triggers an **Implicit Commit** and resets the session.
+
+## 6. Signing & Distribution
+*   **Ad-hoc Signing:** All binaries are signed with an ad-hoc identity (`-`). This satisfies macOS architecture requirements (especially on Apple Silicon) and changes the system error from "Damaged" to "Unverified Developer" for local usage.
+*   **Gatekeeper Quarantine:** Because the project is not notarized by Apple, macOS applies the `com.apple.quarantine` attribute to downloaded binaries, which can still trigger a "Damaged" warning despite ad-hoc signing.
+*   **Installer Workflow:** Distribution includes an `install.sh` script that provides a comprehensive security disclosure:
+    1.  **Keylogging Risk:** Disclosure that Input Methods can monitor all keystrokes.
+    2.  **Notarization Status:** Disclosure that the app has not been scanned by Apple.
+    3.  **Tampering Risk:** Disclosure that the "Damaged" warning is a protection against altered code.
+    4.  **Informed Consent:** Requires explicit `y/N` approval before:
+        - Removing the quarantine attribute (`xattr -d`).
+        - Installing to `~/Library/Input Methods/`.
+        - Registering the component with the system.

@@ -45,33 +45,56 @@ Unicorn is designed with a **Pure Core, Impure Shell** architecture:
 *   **macOS:** 14.0 or later.
 *   **Xcode:** 16.0 or later (Swift 6.0).
 
-### Build & Install from Source
-The project includes a `Makefile` to automate the process. By default, it installs in **Release** mode for performance.
+### Option A: Installation via Pre-built Binary (Recommended)
+1.  **Download:** Get `unicorn-macos.zip` from **[Releases](https://github.com/zyshih/unicorn-macos/releases)**.
+2.  **Extract:** Unzip the archive. You will see `unicorn.app` and `install.sh`.
+3.  **Run Installer:** Open your Terminal in the extracted folder and run:
+    ```bash
+    sh install.sh
+    ```
+4.  **Authorize:** Follow the prompts to acknowledge the security notice. The script will move Unicorn to your Library and register it.
+
+### Option B: Build & Install from Source
+The project includes a `Makefile` to automate the process.
 
 ```bash
 # Build and install (Release)
 make install
 ```
 
-**What this command does:**
-1.  **Build:** Builds the `unicorn.app` bundle using `xcodebuild`.
-2.  **Installation:** Copies the bundle to `~/Library/Input Methods/`.
-3.  **Registration:** Runs `lsregister` to notify macOS of the new source.
-4.  **Restart:** Restarts the process to apply changes.
-
-### Alternative: Installation via Pre-built Binary
-1.  **Download:** Get `unicorn-macos.zip` from **[Releases](https://github.com/zyshih/unicorn-macos/releases)**.
-2.  **Install:** Move `unicorn.app` to `~/Library/Input Methods/`.
-3.  **Register:** Run:
-    ```bash
-    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f ~/Library/Input\ Methods/unicorn.app
-    ```
-4.  **Gatekeeper:** Right-click the app in Finder and select **Open** to authorize it.
-
 ### Enabling the Input Method
 1.  Open **System Settings** -> **Keyboard** -> **Input Sources**.
 2.  Click **Edit...** then the **+** button.
 3.  Search for **Unicorn** and click **Add**.
+
+---
+
+## 🛡️ Security & Privacy (IMPORTANT)
+
+Unicorn is an independent, open-source project. Because it is **not notarized by Apple**, you will encounter security warnings during installation. Please read the following risks carefully before proceeding.
+
+### ⚠️ Security Risks of Unverified Input Method
+
+1.  **Full Keystroke Access (Keylogging Risk):**
+    As an Input Method, Unicorn has the technical capability to monitor and record **EVERY keystroke** you type across **ALL apps** on your system. This includes passwords, credit card numbers, and private messages.
+2.  **Lack of Apple Notarization:**
+    This application is unsigned and has NOT been scanned for malware by Apple's automated services. Its developer's identity is not officially verified by Apple.
+3.  **Potential for Corruption or Tampering:**
+    The "App is Damaged" warning macOS may show is a default mechanism to protect you from code that might have been altered or injected with malicious payloads during or after download.
+4.  **Data Exfiltration Risk:**
+    While Unicorn does not request network permissions, unverified software could theoretically attempt to exfiltrate data if security vulnerabilities are present or if it is maliciously modified.
+
+### 🛡️ Our Commitment to Privacy
+*   **Open Source:** The entire logic of Unicorn is [open source](https://github.com/zyshih/unicorn-macos). We encourage users to audit the code.
+*   **No Network Access:** Unicorn does not request or use network entitlements. It operates entirely locally on your machine.
+*   **Integrity Verification:** We provide SHA256 checksums for every release. You can verify the main binary yourself:
+    ```bash
+    shasum -a 256 ~/Library/Input\ Methods/unicorn.app/Contents/MacOS/unicorn
+    ```
+
+### How to Handle macOS Warnings
+*   **"App is Damaged":** This is a quarantine flag for unnotarized downloads. The `install.sh` script removes this flag after you acknowledge the risks.
+*   **"Unverified Developer":** If prompted, you may need to right-click `unicorn.app` in Finder and select **Open** to authorize it manually.
 
 ---
 
