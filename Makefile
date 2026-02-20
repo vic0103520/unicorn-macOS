@@ -5,7 +5,7 @@ APP_NAME = unicorn
 BUILD_DIR = build
 CONFIG = Release
 # Actual built product path from xcodebuild output
-APP_BUNDLE = $(PWD)/Library/Input Methods/$(CONFIG)/$(APP_NAME).app
+APP_BUNDLE = $(PWD)/$(BUILD_DIR)/$(CONFIG)/$(APP_NAME).app
 INSTALL_DIR = $(HOME)/Library/Input Methods
 
 .PHONY: all build install build-debug install-debug clean test lint format coverage
@@ -33,7 +33,9 @@ build:
 	xcodebuild -project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration $(CONFIG) \
-		-derivedDataPath $(BUILD_DIR) \
+		-destination 'platform=macOS' \
+		SYMROOT=$(PWD)/$(BUILD_DIR) \
+		OBJROOT=$(PWD)/$(BUILD_DIR)/obj \
 		CODE_SIGN_IDENTITY="" \
 		CODE_SIGNING_REQUIRED=NO \
 		CODE_SIGNING_ALLOWED=NO
@@ -51,7 +53,6 @@ install: build
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -rf "$(PWD)/Library/Input Methods"
 
 # Run Engine tests
 test:
