@@ -4,8 +4,10 @@
 APP_NAME = unicorn
 BUILD_DIR = build
 CONFIG = Release
+SYMROOT = $(CURDIR)/$(BUILD_DIR)
+OBJROOT = $(SYMROOT)/obj
 # Actual built product path from xcodebuild output
-APP_BUNDLE = $(PWD)/$(BUILD_DIR)/$(CONFIG)/$(APP_NAME).app
+APP_BUNDLE = $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 INSTALL_DIR = $(HOME)/Library/Input Methods
 
 .PHONY: all build install build-debug install-debug clean test lint format coverage
@@ -34,8 +36,8 @@ build:
 		-scheme $(APP_NAME) \
 		-configuration $(CONFIG) \
 		-destination 'platform=macOS' \
-		SYMROOT=$(PWD)/$(BUILD_DIR) \
-		OBJROOT=$(PWD)/$(BUILD_DIR)/obj \
+		SYMROOT=$(SYMROOT) \
+		OBJROOT=$(OBJROOT) \
 		CODE_SIGN_IDENTITY="" \
 		CODE_SIGNING_REQUIRED=NO \
 		CODE_SIGNING_ALLOWED=NO
