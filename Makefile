@@ -38,9 +38,9 @@ build:
 		-destination 'platform=macOS' \
 		SYMROOT=$(SYMROOT) \
 		OBJROOT=$(OBJROOT) \
-		CODE_SIGN_IDENTITY="" \
-		CODE_SIGNING_REQUIRED=NO \
-		CODE_SIGNING_ALLOWED=NO
+		CODE_SIGN_IDENTITY="-" \
+		CODE_SIGNING_REQUIRED=YES \
+		CODE_SIGNING_ALLOWED=YES
 
 # Install the Input Method to the user's Library
 install: build

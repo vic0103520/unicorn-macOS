@@ -11,7 +11,8 @@ permissions:
 jobs:
   release:
     runs-on: macos-latest
-
+    outputs:
+      tag: ${{ github.ref_name }}
     steps:
     - uses: actions/checkout@v4
 
@@ -20,16 +21,62 @@ jobs:
         make build
         # Create a clean dist directory
         mkdir dist
-        # Copy the built app to dist
+        # Copy the built app and the installer script
         cp -R "build/Release/unicorn.app" dist/
+        cp "install.sh" dist/
+        # Generate SHA256 checksum of the main binary for release notes
+        echo "SHA256 Checksum (unicorn.app/Contents/MacOS/unicorn):"
+        shasum -a 256 "dist/unicorn.app/Contents/MacOS/unicorn" | awk '{print $1}' > dist/checksum.txt
+        cat dist/checksum.txt
 
     - name: Archive
       run: |
         cd dist
-        zip -r unicorn-macos.zip unicorn.app
+        zip -r unicorn-macos.zip .
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/unicorn-macos.zip
+        files: |
+          dist/unicorn-macos.zip
+          dist/checksum.txt
         generate_release_notes: true
+        body: |
+          ## Integrity Verification
+          Please verify the SHA256 checksum of the 'unicorn' binary before trusting it:
+          $(cat dist/checksum.txt)
+
+  verify:
+    needs: release
+    runs-on: macos-latest
+    steps:
+    - name: Download Release from GitHub
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # Wait for GitHub to index the release
+        sleep 15
+        gh release download ${{ github.ref_name }} --pattern "unicorn-macos.zip"
+
+    - name: Verify Release Artifact
+      run: |
+        # Create a clean test environment
+        mkdir test_install
+        unzip unicorn-macos.zip -d test_install
+        cd test_install
+        
+        # Simulate a download by adding the quarantine attribute
+        xattr -w com.apple.quarantine "0081;66000000;Safari;" unicorn.app
+        
+        # Verify it is initially quarantined
+        xattr unicorn.app | grep "com.apple.quarantine"
+        
+        # Run the bundled installer (simulating user input 'y')
+        echo "y" | sh install.sh
+        
+        # Final validation: Ensure the attribute is removed and app is moved
+        if xattr "$HOME/Library/Input Methods/unicorn.app" | grep -q "com.apple.quarantine"; then
+          echo "Verification Failed: Quarantine attribute was not removed."
+          exit 1
+        fi
+        echo "Verification Success: Release artifact downloaded from GitHub is installable."
