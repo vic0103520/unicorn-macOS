@@ -21,7 +21,7 @@ jobs:
         # Create a clean dist directory
         mkdir dist
         # Copy the built app to dist
-        cp -R "build/Build/Products/Debug/unicorn.app" dist/
+        cp -R "build/Release/unicorn.app" dist/
 
     - name: Archive
       run: |

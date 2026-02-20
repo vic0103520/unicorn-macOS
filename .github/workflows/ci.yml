@@ -24,3 +24,6 @@ jobs:
 
     - name: Build Project
       run: make build
+
+    - name: Install Project
+      run: make install
