@@ -78,3 +78,15 @@ If the key is not a valid Trie continuation, not a control key, and not a select
         - Removing the quarantine attribute (`xattr -d`).
         - Installing to `~/Library/Input Methods/`.
         - Registering the component with the system.
+
+### 6.1 Verification Strategy
+The project uses two complementary verification layers to ensure distribution reliability:
+
+1.  **Source Verification (CI):**
+    - **Trigger:** Every push/PR.
+    - **Mechanism:** `make install`.
+    - **Purpose:** Confirms the source code builds correctly and that the `Makefile` logic for system registration is functional in a clean environment.
+2.  **Artifact Verification (Release):**
+    - **Trigger:** Tagged releases.
+    - **Mechanism:** Downloads the final `.zip` from GitHub and runs `sh install.sh`.
+    - **Purpose:** Simulates the end-user experience. Confirms the archive integrity, the effectiveness of the quarantine removal script, and the automated installation of the pre-built binary.

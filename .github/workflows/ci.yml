@@ -22,8 +22,5 @@ jobs:
     - name: Run Unit Tests
       run: make test
 
-    - name: Build Project
-      run: make build
-
-    - name: Install Project
+    - name: Build and Install Project
       run: make install
