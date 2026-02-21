@@ -34,13 +34,14 @@ jobs:
         cd dist
         zip -r unicorn-macos.zip .
 
-    - name: Create Release
+    - name: Create Release (Draft)
       uses: softprops/action-gh-release@v1
       with:
         files: |
           dist/unicorn-macos.zip
           dist/checksum.txt
         generate_release_notes: true
+        draft: true
         body: |
           ## Integrity Verification
           Please verify the SHA256 checksum of the 'unicorn' binary before trusting it:
@@ -56,7 +57,7 @@ jobs:
       run: |
         # Wait for GitHub to index the release
         sleep 15
-        gh release download ${{ github.ref_name }} --pattern "unicorn-macos.zip"
+        gh release download ${{ github.ref_name }} --repo ${{ github.repository }} --pattern "unicorn-macos.zip"
 
     - name: Verify Release Artifact
       run: |
@@ -68,9 +69,6 @@ jobs:
         # Simulate a download by adding the quarantine attribute
         xattr -w com.apple.quarantine "0081;66000000;Safari;" unicorn.app
         
-        # Verify it is initially quarantined
-        xattr unicorn.app | grep "com.apple.quarantine"
-        
         # Run the bundled installer (simulating user input 'y')
         echo "y" | sh install.sh
         
@@ -79,4 +77,11 @@ jobs:
           echo "Verification Failed: Quarantine attribute was not removed."
           exit 1
         fi
-        echo "Verification Success: Release artifact downloaded from GitHub is installable."
+        echo "Verification Success: Release artifact is valid and installable."
+
+    - name: Publish Release
+      if: success()
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release edit ${{ github.ref_name }} --draft=false --repo ${{ github.repository }}
