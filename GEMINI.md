@@ -58,6 +58,12 @@ make install
 ```
 This builds the app, installs it to `~/Library/Input Methods/`, registers it, and restarts the process.
 
+**Release Management:**
+*   `make test-release`: Triggers an end-to-end release simulation with a unique test tag.
+*   `make release TAG=v*`: Triggers a formal release for the specified version.
+*   `make re-release TAG=v*`: Safely wipes an existing release/tag and re-triggers the workflow.
+*   `make clean-test-releases`: Manually wipes all test tags and releases from GitHub.
+
 **Run Tests:**
 ```bash
 make test

@@ -62,6 +62,12 @@ The project includes a `Makefile` to automate the process.
 make install
 ```
 
+### Release Management (Developers)
+For maintainers, the `Makefile` includes targets to manage the release lifecycle:
+*   **Test Release:** `make test-release` (Runs an end-to-end simulation; automatically cleans up after itself).
+*   **Formal Release:** `make release TAG=v1.0.0` (Tags and triggers the production release workflow).
+*   **Re-release:** `make re-release TAG=v1.0.0` (Wipes an existing release and re-triggers the workflow).
+
 ### Enabling the Input Method
 1.  Open **System Settings** -> **Keyboard** -> **Input Sources**.
 2.  Click **Edit...** then the **+** button.

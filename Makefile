@@ -14,20 +14,44 @@ INSTALL_DIR = $(HOME)/Library/Input Methods
 
 all: build
 
-# Generate a unique tag for testing the release workflow
-TEST_TAG = v0.0.0-test-$(shell date +%Y%m%d%H%M%S)
+# --- Release Management Helpers ---
 
+# Internal helper to wipe a release and tag (usage: make _wipe_release TAG=v0.1.2)
+_wipe_release:
+	@echo "Wiping release and tag: $(TAG)"
+	-gh release delete $(TAG) --yes --repo zyshih/unicorn-macos 2>/dev/null || true
+	-git push origin :refs/tags/$(TAG) 2>/dev/null || true
+	-git tag -d $(TAG) 2>/dev/null || true
+
+# Public: Trigger a release (usage: make release TAG=v0.1.2)
+# Automatically cleans up test releases first to save resources
+release:
+	@if [ -z "$(TAG)" ]; then echo "Error: TAG is required. Usage: make release TAG=v0.1.2"; exit 1; fi
+	-$(MAKE) clean-test-releases
+	@echo "Triggering release with tag: $(TAG)"
+	git tag $(TAG)
+	git push origin $(TAG)
+
+# Public: Test release with a unique timestamped tag
+TEST_TAG = test-$(shell date +%Y%m%d%H%M%S)
 test-release:
-	@echo "Triggering test release with tag: $(TEST_TAG)"
-	git tag $(TEST_TAG)
-	git push origin $(TEST_TAG)
+	$(MAKE) release TAG=$(TEST_TAG)
 	@echo "Done. Monitor progress on GitHub Actions."
 
-# Clean up all local and remote test tags
+# Public: Clean up all local and remote test tags and releases
 clean-test-releases:
-	@echo "Cleaning up local and remote test tags..."
-	@git tag -l "v0.0.0-test-*" | xargs -I {} sh -c 'git tag -d {}; git push origin :refs/tags/{}'
+	@echo "Cleaning up all test-* tags and releases..."
+	@for tag in $$(git tag -l "test-*"); do \
+		$(MAKE) _wipe_release TAG=$$tag; \
+	done
 	@echo "Cleanup complete."
+
+# Public: Re-release a version (usage: make re-release TAG=v0.1.2)
+re-release:
+	@if [ -z "$(TAG)" ]; then echo "Error: TAG is required. Usage: make re-release TAG=v0.1.2"; exit 1; fi
+	$(MAKE) _wipe_release TAG=$(TAG)
+	$(MAKE) release TAG=$(TAG)
+	@echo "Re-release of $(TAG) triggered. Monitor progress on GitHub Actions."
 
 # Build the project in Debug mode
 build-debug:
