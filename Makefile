@@ -10,9 +10,24 @@ OBJROOT = $(SYMROOT)/obj
 APP_BUNDLE = $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 INSTALL_DIR = $(HOME)/Library/Input Methods
 
-.PHONY: all build install build-debug install-debug clean test lint format coverage
+.PHONY: all build install build-debug install-debug clean test lint format coverage test-release clean-test-releases
 
 all: build
+
+# Generate a unique tag for testing the release workflow
+TEST_TAG = v0.0.0-test-$(shell date +%Y%m%d%H%M%S)
+
+test-release:
+	@echo "Triggering test release with tag: $(TEST_TAG)"
+	git tag $(TEST_TAG)
+	git push origin $(TEST_TAG)
+	@echo "Done. Monitor progress on GitHub Actions."
+
+# Clean up all local and remote test tags
+clean-test-releases:
+	@echo "Cleaning up local and remote test tags..."
+	@git tag -l "v0.0.0-test-*" | xargs -I {} sh -c 'git tag -d {}; git push origin :refs/tags/{}'
+	@echo "Cleanup complete."
 
 # Build the project in Debug mode
 build-debug:
