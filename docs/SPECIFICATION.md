@@ -87,6 +87,9 @@ The project uses two complementary verification layers to ensure distribution re
     - **Mechanism:** `make install`.
     - **Purpose:** Confirms the source code builds correctly and that the `Makefile` logic for system registration is functional in a clean environment.
 2.  **Artifact Verification (Release):**
-    - **Trigger:** Tagged releases.
+    - **Trigger:** Tagged releases (`v*` or `test-*`).
     - **Mechanism:** Downloads the final `.zip` from GitHub and runs `sh install.sh`.
+    - **Outcome Logic:**
+        - **Real Versions (`v*`):** Published only if verification succeeds.
+        - **Test Versions (`test-*`):** Always deleted from GitHub after the run to maintain history cleanliness.
     - **Purpose:** Simulates the end-user experience. Confirms the archive integrity, the effectiveness of the quarantine removal script, and the automated installation of the pre-built binary.

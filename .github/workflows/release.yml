@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'test-*'
 
 permissions:
   contents: write
@@ -42,6 +43,7 @@ jobs:
           dist/checksum.txt
         generate_release_notes: true
         draft: true
+        fail_on_unresolved_errors: false
         body: |
           ## Integrity Verification
           Please verify the SHA256 checksum of the 'unicorn' binary before trusting it:
@@ -80,8 +82,17 @@ jobs:
         echo "Verification Success: Release artifact is valid and installable."
 
     - name: Publish Release
-      if: success()
+      if: "startsWith(github.ref_name, 'v') && success()"
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         gh release edit ${{ github.ref_name }} --draft=false --repo ${{ github.repository }}
+
+    - name: Cleanup Test Release
+      if: "startsWith(github.ref_name, 'test-') && always()"
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "Auto-cleaning test release: ${{ github.ref_name }}"
+        gh release delete ${{ github.ref_name }} --yes --repo ${{ github.repository }} || true
+        git push origin :refs/tags/${{ github.ref_name }}
