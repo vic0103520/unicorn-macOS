@@ -46,6 +46,11 @@ All Swift code in this project must strictly adhere to the **Functional Swift** 
 *   **Controlled Mutation:** Limit `var` to local accumulators or the central `Engine.state`.
 *   **Computation Flow:** Use the `|>` (pipeline) and `>>=` (bind) operators for clear, monadic data transformations.
 
+## Tooling & Git Conventions
+The project follows a strict separation of concerns for development and automation:
+*   **Git for Local State:** Use standard `git` commands for all local repository operations (commits, branch management, local tags, and basic pushes).
+*   **GH for Remote State:** Use the GitHub CLI (`gh`) for interactions with GitHub-specific features (Pull Requests, Releases, Drafts, and API-based remote cleanup). This is mandatory in CI environments where a local `.git` repository may not be present.
+
 ## Building and Running
 
 The project is a standard Xcode project wrapped with a Makefile for convenience. All builds are automatically ad-hoc signed (`-`) to ensure compatibility with modern macOS security requirements. 
