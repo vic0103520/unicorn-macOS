@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
       - 'test-*'
+  pull_request:
+    branches:
+      - 'improve-release-workflow'
 
 permissions:
   contents: write
