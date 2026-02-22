@@ -10,6 +10,9 @@ OBJROOT = $(SYMROOT)/obj
 APP_BUNDLE = $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 INSTALL_DIR = $(HOME)/Library/Input Methods
 
+# Automatically detect the GitHub repository name (e.g., owner/repo)
+GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
+
 .PHONY: all build install build-debug install-debug clean test lint format coverage test-release clean-test-releases
 
 all: build
@@ -19,7 +22,7 @@ all: build
 # Internal helper to wipe a release and tag (usage: make _wipe_release TAG=v0.1.2)
 _wipe_release:
 	@echo "Wiping release and tag: $(TAG)"
-	-gh release delete $(TAG) --yes --repo zyshih/unicorn-macos 2>/dev/null || true
+	-gh release delete $(TAG) --yes --repo $(GITHUB_REPO) 2>/dev/null || true
 	-git push origin :refs/tags/$(TAG) 2>/dev/null || true
 	-git tag -d $(TAG) 2>/dev/null || true
 

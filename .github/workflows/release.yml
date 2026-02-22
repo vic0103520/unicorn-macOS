@@ -94,5 +94,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: |
         echo "Auto-cleaning test release: ${{ github.ref_name }}"
+        # Delete the draft release
         gh release delete ${{ github.ref_name }} --yes --repo ${{ github.repository }} || true
-        git push origin :refs/tags/${{ github.ref_name }}
+        # Delete the remote tag using the GitHub API (doesn't require local .git)
+        gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/${{ github.ref_name }} || true
