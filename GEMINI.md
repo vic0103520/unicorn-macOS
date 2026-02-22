@@ -48,8 +48,9 @@ All Swift code in this project must strictly adhere to the **Functional Swift** 
 
 ## Tooling & Git Conventions
 The project follows a strict separation of concerns for development and automation:
-*   **Git for Local State:** Use standard `git` commands for all local repository operations (commits, branch management, local tags, and basic pushes).
-*   **GH for Remote State:** Use the GitHub CLI (`gh`) for interactions with GitHub-specific features (Pull Requests, Releases, Drafts, and API-based remote cleanup). This is mandatory in CI environments where a local `.git` repository may not be present.
+*   **Git for Local State:** Use standard `git` commands for all local repository operations (commits, branch management, local tags).
+*   **GH for Remote State:** Use the GitHub CLI (`gh`) for interactions with GitHub-specific features (Pull Requests, Releases, Drafts).
+*   **Environment Awareness:** Release management targets automatically detect the repository name (`GITHUB_REPO`) and use API-based cleanup in CI environments to remove dependencies on a local `.git` repository.
 
 ## Building and Running
 
