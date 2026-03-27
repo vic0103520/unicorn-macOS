@@ -1,36 +1,26 @@
 # Security & Distribution
 
 ## 1. Runtime Security & Limits
-*   **Persistent State Cap:** 
-    *   The Engine maintains a history of content-changing states for undo. The stack is capped at **100 entries**.
-*   **Input Buffer Limit:** 
-    *   The Engine enforces a hard limit on the input buffer size.
-    *   **Constraint:** `MAX_BUFFER_LENGTH = 50` characters.
-    *   **Behavior:** If the buffer reaches this limit, the engine triggers an **Implicit Commit** and resets the session.
+The Engine enforces strict memory and operational boundaries to ensure system stability.
+*   **Persistent State Cap:** The `history` stack for universal undo is capped at **100 entries** (`MAX_HISTORY_DEPTH`).
+*   **Input Buffer Limit:** The input `buffer` is capped at **50 characters** (`MAX_BUFFER_LENGTH`).
+*   **Boundary Behavior:** If the buffer reaches its limit, the engine triggers an **Implicit Commit** (see [Activation](activation.md)) and resets the session to prevent memory exhaustion or UI lag.
 
 ## 2. Signing & Code Integrity
-*   **Ad-hoc Signing:** All binaries are signed with an ad-hoc identity (`-`). This satisfies macOS architecture requirements (especially on Apple Silicon) and changes the system error from "Damaged" to "Unverified Developer" for local usage.
-*   **Gatekeeper Quarantine:** Because the project is not notarized by Apple, macOS applies the `com.apple.quarantine` attribute to downloaded binaries, which can still trigger a "Damaged" warning despite ad-hoc signing.
-*   **Installer Workflow:** Distribution includes an `install.sh` script that provides a comprehensive security disclosure:
-    1.  **Keylogging Risk:** Disclosure that Input Methods can monitor all keystrokes.
-    2.  **Notarization Status:** Disclosure that the app has not been scanned by Apple.
-    3.  **Tampering Risk:** Disclosure that the "Damaged" warning is a protection against altered code.
-    4.  **Informed Consent:** Requires explicit `y/N` approval before:
-        - Removing the quarantine attribute (`xattr -d`).
-        - Installing to `~/Library/Input Methods/`.
-        - Registering the component with the system.
+*   **Ad-hoc Signing:** All binaries are signed with an ad-hoc identity (`-`). This satisfies macOS architecture requirements for Apple Silicon and changes the system error from "Damaged" to "Unverified Developer" for local usage.
+*   **Gatekeeper Quarantine:** macOS applies the `com.apple.quarantine` attribute to downloaded binaries. This can trigger a "Damaged" warning even if the binary is ad-hoc signed.
 
-## 3. Verification Strategy
-The project uses two complementary verification layers to ensure distribution reliability:
+## 3. Installer & Security Disclosure
+Distribution includes an `install.sh` script that manages the security lifecycle and provides mandatory disclosures.
+*   **Quarantine Removal:** The script uses `xattr -rd com.apple.quarantine` to manually bypass Gatekeeper blocks after user confirmation.
+*   **Mandatory Disclosures:** The installer requires explicit consent (`y/N`) after presenting a detailed security notice covering:
+    1.  **Keylogging Risk:** Disclosure that Input Methods have technical access to all keystrokes.
+    2.  **Notarization Status:** Disclosure that the app has not been scanned or verified by Apple.
+    3.  **Tampering Risk:** Explanation of the "Damaged" warning as a protection against altered code.
+    4.  **Data Exfiltration Risk:** Potential for malicious code to send typed data to remote servers.
+*   **Integrity Verification:** The script calculates and displays the **SHA256 checksum** of the main binary to allow users to verify the integrity of the downloaded artifact.
 
-1.  **Source Verification (CI):**
-    - **Trigger:** Every push/PR.
-    - **Mechanism:** `make install`.
-    - **Purpose:** Confirms the source code builds correctly and that the `Makefile` logic for system registration is functional in a clean environment.
-2.  **Artifact Verification (Release):**
-    - **Trigger:** Tagged releases (`v*` or `test-*`).
-    - **Mechanism:** Downloads the final `.zip` from GitHub and runs `sh install.sh`.
-    - **Outcome Logic:**
-        - **Real Versions (`v*`):** Published only if verification succeeds.
-        - **Test Versions (`test-*`):** Always deleted from GitHub after the run to maintain history cleanliness.
-    - **Purpose:** Simulates the end-user experience. Confirms the archive integrity, the effectiveness of the quarantine removal script, and the automated installation of the pre-built binary.
+## 4. Verification Strategy (CI/CD)
+The project uses two verification layers:
+1.  **Source Verification:** `make install` is run in CI to confirm the code builds and registers correctly from source.
+2.  **Artifact Verification:** Tagged releases trigger a workflow that downloads the final `.zip` and runs `install.sh` to simulate the end-user experience, verifying the archive integrity and the effectiveness of the quarantine removal script.
