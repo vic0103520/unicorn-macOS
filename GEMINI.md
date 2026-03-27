@@ -84,8 +84,9 @@ Generates a detailed line coverage report for the Engine logic.
 
 ## Key Files & Directories
 
-*   `docs/SPECIFICATION.md`: Detailed architectural and behavioral specification.
+*   `docs/SPECIFICATION.md`: High-level overview and index for system specifications.
 *   `docs/STYLE_GUIDE.md`: Swift functional programming style guide.
+*   `docs/backlog.md`: Living record of future tasks and implementation plans.
 *   **`install.sh`**: One-click installer for pre-built binaries (handles Gatekeeper bypass).
 *   **`unicorn/`**: Source code.
     *   `Engine.swift`: Core logic state machine.
