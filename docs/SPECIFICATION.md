@@ -10,6 +10,8 @@ Unicorn is a native macOS input method implemented in Swift. Its **Pure Core, Im
 2. **Presentation model (`EngineState`):** Pure derived values for composition text, selection range, candidate visibility, and candidate selection.
 3. **Framework shell (`InputController`):** The macOS and `InputMethodKit` boundary that translates `NSEvent` values, sends normalized input to the engine, and executes actions through `IMKTextInput` and `IMKCandidates`.
 
+The domain and presentation tiers compile into the static `UnicornCore` module. The `unicorn` app target links and imports that module, while `InputMethodKit` integration and app lifecycle remain in the app target.
+
 The flow below shows component boundaries and possible outcomes for one key event. Solid output branches are alternatives, except that invalid-input fallback inserts resolved text and then returns the original key. The detailed specifications remain authoritative for processing priority and edge cases.
 
 ```mermaid
