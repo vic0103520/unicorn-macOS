@@ -78,11 +78,11 @@ jobs:
           build/Test/Results/UnicornCoreTests.xcresult \
           | tee build/Test/Results/coverage.txt
 
-    - name: Upload native test results
+    - name: Upload native test .xcresult
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: unicorn-native-test-results-macos-15
+        name: unicorn-native-test-xcresult-macos-15
         path: build/Test/Results/UnicornCoreTests.xcresult
         if-no-files-found: error
         retention-days: 14
@@ -144,11 +144,11 @@ jobs:
           CODE_SIGNING_ALLOWED=YES \
           2>&1 | tee build/Diagnostics/address-undefined-sanitizers.log
 
-    - name: Upload ASan and UBSan results
+    - name: Upload ASan and UBSan .xcresult
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: unicorn-address-undefined-results-macos-15
+        name: unicorn-address-undefined-xcresult-macos-15
         path: build/Sanitizers/AddressUndefined/UnicornCoreTests.xcresult
         if-no-files-found: error
         retention-days: 14
@@ -200,11 +200,11 @@ jobs:
           CODE_SIGNING_ALLOWED=YES \
           2>&1 | tee build/Diagnostics/thread-sanitizer.log
 
-    - name: Upload TSan results
+    - name: Upload TSan .xcresult
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: unicorn-thread-sanitizer-results-macos-15
+        name: unicorn-thread-sanitizer-xcresult-macos-15
         path: build/Sanitizers/Thread/UnicornCoreTests.xcresult
         if-no-files-found: error
         retention-days: 14
