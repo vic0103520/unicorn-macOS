@@ -37,15 +37,16 @@ make install
 make coverage
 ```
 
-- `make test` runs the hostless `UnicornCoreTests` bundle on the host architecture with coverage enabled, then cross-compiles the production app for the other supported architecture. The cross-compilation checks compilation only; it does not execute that architecture.
+- `make test` runs the hostless `UnicornCoreTests` bundle on the host architecture with coverage enabled, then builds a Debug app for arm64 and x86_64 and verifies both slices with `lipo`. Only the host-architecture tests execute.
 - Test diagnostics and coverage data are stored in `build/Test/Results/UnicornCoreTests.xcresult`. All test intermediates stay under the ignored `build/Test/` directory.
 - `make coverage` reruns the standard test path and prints a readable report from that `.xcresult` bundle.
-- `make build` performs a Release build by default and overrides Xcode signing with the ad-hoc identity `-`.
+- `make build` performs a universal arm64 and x86_64 Release build by default and overrides Xcode signing with the ad-hoc identity `-`; override `ARCHS` to request different slices.
+- `make test-native`, `make test-summary`, `make build-universal`, and `make coverage-report` expose the reusable stages behind the standard targets.
 - `make install` builds, replaces the app in `~/Library/Input Methods/`, and registers it with Launch Services.
 
 The hostless suite uses Swift Testing for engine transitions, trie-backed lookup, candidates, history, limits, and presentation calculations.
 
-Core tests exercise the public engine manager seam but do not launch `unicorn.app`, an `IMKServer`, or the candidate panel. InputMethodKit lifecycle, marked-text behavior, candidate UI, and event handling in real clients require installing and enabling the input source and validating it in actual client applications. Cross-compilation and hostless tests do not replace that end-to-end validation or validate the minimum supported macOS version.
+Core tests exercise the public engine manager seam but do not launch `unicorn.app`, an `IMKServer`, or the candidate panel. InputMethodKit lifecycle, marked-text behavior, candidate UI, and event handling in real clients require installing and enabling the input source and validating it in actual client applications. Universal compilation and hostless tests do not replace that end-to-end validation or validate the minimum supported macOS version.
 
 Release targets (`release`, `test-release`, `re-release`, and `clean-test-releases`) mutate local and remote Git or GitHub state. Inspect their definitions in the Makefile and use them only with explicit release intent.
 

@@ -2,28 +2,45 @@
 
 # Variables
 APP_NAME = unicorn
-BUILD_DIR = build
-CONFIG = Release
-XCODEBUILD = xcodebuild$(if $(filter 1,$(VERBOSE)),, -quiet)
+XCODE_PROJECT ?= $(APP_NAME).xcodeproj
+XCODE_SCHEME ?= $(APP_NAME)
+BUILD_DIR ?= build
+CONFIG ?= Release
+ARCHS ?= arm64 x86_64
+VERBOSE ?= 0
+NO_COLOR ?= 0
+
+XCODEBUILD ?= xcodebuild
+XCODEBUILD_FLAGS = $(if $(filter 1,$(VERBOSE)),,-quiet)
+XCODEBUILD_COMMAND = $(strip $(XCODEBUILD) $(XCODEBUILD_FLAGS))
+XCODE_PROJECT_ARGS = -project "$(XCODE_PROJECT)" -scheme "$(XCODE_SCHEME)"
+XCODE_SIGNING_ARGS = \
+	CODE_SIGN_IDENTITY="-" \
+	CODE_SIGNING_REQUIRED=YES \
+	CODE_SIGNING_ALLOWED=YES
+
 PASS_LABEL = $(if $(filter 1,$(NO_COLOR)),[PASS],\033[1;32m[PASS]\033[0m)
 FAIL_LABEL = $(if $(filter 1,$(NO_COLOR)),[FAIL],\033[1;31m[FAIL]\033[0m)
 RESULT_LABEL = $(if $(filter 1,$(NO_COLOR)),[RESULT],\033[1;36m[RESULT]\033[0m)
-SYMROOT = $(CURDIR)/$(BUILD_DIR)
-OBJROOT = $(SYMROOT)/obj
-NATIVE_ARCH = $(shell uname -m)
-OTHER_SUPPORTED_ARCH = $(if $(filter arm64,$(NATIVE_ARCH)),x86_64,arm64)
-TEST_ROOT = $(SYMROOT)/Test
-TEST_DERIVED_DATA = $(TEST_ROOT)/DerivedData
-TEST_RESULT_BUNDLE = $(TEST_ROOT)/Results/UnicornCoreTests.xcresult
-ARCH_VALIDATION_DERIVED_DATA = $(TEST_ROOT)/OtherArchitectureDerivedData
-# Actual built product path from xcodebuild output
-APP_BUNDLE = $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
-INSTALL_DIR = $(HOME)/Library/Input Methods
+
+SYMROOT ?= $(abspath $(BUILD_DIR))
+OBJROOT ?= $(SYMROOT)/obj
+NATIVE_ARCH ?= $(shell uname -m)
+TEST_ROOT ?= $(SYMROOT)/Test
+TEST_DERIVED_DATA ?= $(TEST_ROOT)/DerivedData
+TEST_RESULT_BUNDLE ?= $(TEST_ROOT)/Results/UnicornCoreTests.xcresult
+TEST_APP_SYMROOT ?= $(TEST_ROOT)/UniversalBuildProducts
+TEST_APP_OBJROOT ?= $(TEST_ROOT)/UniversalBuildIntermediates
+APP_BUNDLE ?= $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
+APP_EXECUTABLE ?= $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+INSTALL_DIR ?= $(HOME)/Library/Input Methods
 
 # Automatically detect the GitHub repository name (e.g., owner/repo)
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
-.PHONY: all build install build-debug install-debug clean test lint format coverage test-release clean-test-releases
+.PHONY: all build build-universal build-debug install install-debug clean
+.PHONY: test test-native test-summary coverage coverage-report lint format
+.PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
 
@@ -82,21 +99,28 @@ lint:
 format:
 	swiftlint --fix
 
-# Build the project using xcodebuild
-build:
-	@if $(XCODEBUILD) -project $(APP_NAME).xcodeproj \
-		-scheme $(APP_NAME) \
-		-configuration $(CONFIG) \
-		-destination 'platform=macOS' \
-		SYMROOT=$(SYMROOT) \
-		OBJROOT=$(OBJROOT) \
-		CODE_SIGN_IDENTITY="-" \
-		CODE_SIGNING_REQUIRED=YES \
-		CODE_SIGNING_ALLOWED=YES; then \
-		printf '%b\n' "$(PASS_LABEL) App build: configuration=$(CONFIG) path=$(APP_BUNDLE)"; \
+build: build-universal
+
+build-universal:
+	@if $(XCODEBUILD_COMMAND) $(XCODE_PROJECT_ARGS) \
+		-configuration "$(CONFIG)" \
+		-destination 'generic/platform=macOS' \
+		SYMROOT="$(SYMROOT)" \
+		OBJROOT="$(OBJROOT)" \
+		ARCHS="$(ARCHS)" \
+		ONLY_ACTIVE_ARCH=NO \
+		$(XCODE_SIGNING_ARGS); then \
+		:; \
 	else \
 		status=$$?; \
-		printf '%b\n' "$(FAIL_LABEL) App build: configuration=$(CONFIG) exit=$$status"; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " App build: configuration=$(CONFIG) archs=$(ARCHS) exit=$$status"; \
+		exit "$$status"; \
+	fi
+	@if /usr/bin/lipo "$(APP_EXECUTABLE)" -verify_arch $(ARCHS); then \
+		printf '%b%s\n' "$(PASS_LABEL)" " App build: configuration=$(CONFIG) archs=$(ARCHS) path=$(APP_BUNDLE)"; \
+	else \
+		status=$$?; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " App architecture verification: archs=$(ARCHS) path=$(APP_EXECUTABLE) exit=$$status"; \
 		exit "$$status"; \
 	fi
 
@@ -112,15 +136,19 @@ install: build
 
 # Clean build artifacts
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf "$(BUILD_DIR)"
 
-# Run hostless core tests on the current architecture, then cross-compile the app.
-test:
+test: test-native
+	+@$(MAKE) --no-print-directory build-universal \
+		CONFIG=Debug \
+		ARCHS="$(ARCHS)" \
+		SYMROOT="$(TEST_APP_SYMROOT)" \
+		OBJROOT="$(TEST_APP_OBJROOT)"
+
+test-native:
 	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
 	@rm -rf "$(TEST_ROOT)"
-	@if $(XCODEBUILD) clean test \
-		-project $(APP_NAME).xcodeproj \
-		-scheme $(APP_NAME) \
+	@if $(XCODEBUILD_COMMAND) clean test $(XCODE_PROJECT_ARGS) \
 		-configuration Debug \
 		-destination 'platform=macOS,arch=$(NATIVE_ARCH)' \
 		-derivedDataPath "$(TEST_DERIVED_DATA)" \
@@ -128,16 +156,17 @@ test:
 		-enableCodeCoverage YES \
 		SYMROOT="$(TEST_ROOT)/BuildProducts" \
 		OBJROOT="$(TEST_ROOT)/Intermediates" \
-		CODE_SIGN_IDENTITY="-" \
-		CODE_SIGNING_REQUIRED=YES \
-		CODE_SIGNING_ALLOWED=YES; then \
+		$(XCODE_SIGNING_ARGS); then \
 		:; \
 	else \
 		status=$$?; \
-		printf '%b\n' "$(FAIL_LABEL) Tests: arch=$(NATIVE_ARCH) exit=$$status"; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Native tests: arch=$(NATIVE_ARCH) exit=$$status"; \
 		exit "$$status"; \
 	fi
-	@summary_file="$$(mktemp)" || { printf '%b\n' "$(FAIL_LABEL) Test summary: unable to create temporary file"; exit 1; }; \
+	+@$(MAKE) --no-print-directory test-summary
+
+test-summary:
+	@summary_file="$$(mktemp)" || { printf '%b%s\n' "$(FAIL_LABEL)" " Test summary: unable to create temporary file"; exit 1; }; \
 	trap 'rm -f "$$summary_file"' EXIT; \
 	if xcrun xcresulttool get test-results summary --path "$(TEST_RESULT_BUNDLE)" > "$$summary_file" && \
 		result="$$(/usr/bin/plutil -extract result raw -o - "$$summary_file")" && \
@@ -145,39 +174,21 @@ test:
 		failed="$$(/usr/bin/plutil -extract failedTests raw -o - "$$summary_file")" && \
 		skipped="$$(/usr/bin/plutil -extract skippedTests raw -o - "$$summary_file")"; then \
 		if [ "$$result" = "Passed" ] && [ "$$failed" -eq 0 ]; then \
-			printf '%b\n' "$(PASS_LABEL) Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
+			printf '%b%s\n' "$(PASS_LABEL)" " Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
 		else \
-			printf '%b\n' "$(FAIL_LABEL) Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
+			printf '%b%s\n' "$(FAIL_LABEL)" " Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
 			exit 1; \
 		fi; \
 	else \
 		status=$$?; \
-		printf '%b\n' "$(FAIL_LABEL) Test summary: xcresult=$(TEST_RESULT_BUNDLE) exit=$$status"; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Test summary: xcresult=$(TEST_RESULT_BUNDLE) exit=$$status"; \
 		exit "$$status"; \
 	fi
-	@printf '%b\n' "$(RESULT_LABEL) xcresult: path=$(TEST_RESULT_BUNDLE)"
-	@echo "Cross-compiling unicorn.app for $(OTHER_SUPPORTED_ARCH) (compile validation only)..."
-	@if $(XCODEBUILD) clean build \
-		-project $(APP_NAME).xcodeproj \
-		-scheme $(APP_NAME) \
-		-configuration Debug \
-		-destination 'generic/platform=macOS' \
-		-derivedDataPath "$(ARCH_VALIDATION_DERIVED_DATA)" \
-		SYMROOT="$(TEST_ROOT)/OtherArchitectureBuildProducts" \
-		OBJROOT="$(TEST_ROOT)/OtherArchitectureIntermediates" \
-		ARCHS=$(OTHER_SUPPORTED_ARCH) \
-		ONLY_ACTIVE_ARCH=NO \
-		CODE_SIGN_IDENTITY="-" \
-		CODE_SIGNING_REQUIRED=YES \
-		CODE_SIGNING_ALLOWED=YES; then \
-		printf '%b\n' "$(PASS_LABEL) Cross-architecture build: arch=$(OTHER_SUPPORTED_ARCH)"; \
-	else \
-		status=$$?; \
-		printf '%b\n' "$(FAIL_LABEL) Cross-architecture build: arch=$(OTHER_SUPPORTED_ARCH) exit=$$status"; \
-		exit "$$status"; \
-	fi
+	@printf '%b%s\n' "$(RESULT_LABEL)" " xcresult: path=$(TEST_RESULT_BUNDLE)"
 
-# Produce a readable coverage report from the standard test result bundle.
 coverage: test
-	@echo "UnicornCore coverage from $(TEST_RESULT_BUNDLE):"
-	xcrun xccov view --report --only-targets "$(TEST_RESULT_BUNDLE)"
+	+@$(MAKE) --no-print-directory coverage-report
+
+coverage-report:
+	@printf '%b%s\n' "$(RESULT_LABEL)" " UnicornCore coverage: xcresult=$(TEST_RESULT_BUNDLE)"
+	@xcrun xccov view --report --only-targets "$(TEST_RESULT_BUNDLE)"
