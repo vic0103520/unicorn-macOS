@@ -20,4 +20,6 @@ build
 Library/
 dist/
 DerivedData/
-EngineTestsCombined.swift
+*.xcresult
+*.profdata
+*.profraw

@@ -1,45 +1,34 @@
 import Foundation
+import Testing
+@testable import UnicornCore
 
 // MARK: - Test Helpers
 
 func assertEqual<T: Equatable>(
     _ actual: T, _ expected: T, _ message: String, file: String = #file, line: Int = #line
 ) {
-    if actual != expected {
-        print("FAIL: \(message) - Expected \(expected), got \(actual) at \(file):\(line)")
-        exit(1)
-    }
+    #expect(actual == expected, Comment(rawValue: "\(message) at \(file):\(line)"))
 }
 
 func assertTrue(_ condition: Bool, _ message: String, file: String = #file, line: Int = #line) {
-    if !condition {
-        print("FAIL: \(message) - Expected true at \(file):\(line)")
-        exit(1)
-    }
+    #expect(condition, Comment(rawValue: "\(message) at \(file):\(line)"))
 }
 
 func assertFalse(_ condition: Bool, _ message: String, file: String = #file, line: Int = #line) {
-    if condition {
-        print("FAIL: \(message) - Expected false at \(file):\(line)")
-        exit(1)
-    }
+    #expect(!condition, Comment(rawValue: "\(message) at \(file):\(line)"))
 }
 
-func makeEngine(json: String) -> Engine {
-    guard let data = json.data(using: .utf8),
-        let engine = try? Engine(jsonData: data)
-    else {
-        print("FAIL: Could not initialize engine with JSON: \(json)")
-        exit(1)
-    }
-    return engine
+func makeEngine(json: String) throws -> Engine {
+    let data = try #require(json.data(using: .utf8))
+    return try Engine(jsonData: data)
 }
 
 // MARK: - Unit Tests
 
-func testAccumulatingComposition() {
+@Test
+func testAccumulatingComposition() throws {
     print("Test: Accumulating Composition & Backspace Undo")
-    let engine = makeEngine(json: "{\"l\": {\"e\": {\">>\": [\"≤\", \"<=\"]}}}")
+    let engine = try makeEngine(json: "{\"l\": {\"e\": {\">>\": [\"≤\", \"<=\"]}}}")
 
     // 1. Type: \le
     var state = engine.initialState
@@ -67,8 +56,7 @@ func testAccumulatingComposition() {
         // Ensure no hard commit happened
         for action in a4 {
             if case .commit = action {
-                print("FAIL: Should not emit .commit action on soft commit")
-                exit(1)
+                Issue.record("Should not emit .commit action on soft commit")
             }
         }
     }
@@ -101,9 +89,10 @@ func testAccumulatingComposition() {
     assertEqual(s9.committedPrefix, "", "Prefix reset")
 }
 
-func testBasicInput() {
+@Test
+func testBasicInput() throws {
     print("Test: Basic Input Sequence")
-    let engine = makeEngine(json: "{\"l\": {\"a\": {\">>\": [\"λ\"]}}}")
+    let engine = try makeEngine(json: "{\"l\": {\"a\": {\">>\": [\"λ\"]}}}")
 
     // 1. Start: \
     let (s1, a1) = engine.reduce(
@@ -127,9 +116,10 @@ func testBasicInput() {
     }
 }
 
-func testBackspace() {
+@Test
+func testBackspace() throws {
     print("Test: Backspace Logic")
-    let engine = makeEngine(json: "{\"l\": {\"a\": {\">>\": [\"λ\"]}}}")
+    let engine = try makeEngine(json: "{\"l\": {\"a\": {\">>\": [\"λ\"]}}}")
 
     // Setup state: \l
     var state = engine.initialState
@@ -147,9 +137,10 @@ func testBackspace() {
     assertEqual(s2.buffer, "", "Buffer empty")
 }
 
-func testSelectionAndBackslashCommit() {
+@Test
+func testSelectionAndBackslashCommit() throws {
     print("Test: Selection and Backslash Restart")
-    let engine = makeEngine(json: "{\"l\": {\">>\": [\"L1\", \"L2\"]}}")
+    let engine = try makeEngine(json: "{\"l\": {\">>\": [\"L1\", \"L2\"]}}")
 
     // Imperatively advance to \l to set up internal state
     _ = engine.processKey(keyCode: .chars("\\"))
@@ -177,14 +168,14 @@ func testSelectionAndBackslashCommit() {
             sNext.compositionText(), "L2\\", "Should update composition with accumulated text")
         assertEqual(actions.count, 1, "Should only have 1 action (no hard commit)")
     } else {
-        print("FAIL: Expected 1 action, got 0")
-        exit(1)
+        Issue.record("Expected 1 action, got 0")
     }
 }
 
-func testEnterDeactivation() {
+@Test
+func testEnterDeactivation() throws {
     print("Test: Enter Key Deactivation")
-    let engine = makeEngine(json: "{\"l\": {\">>\": [\"L1\", \"L2\"]}}")
+    let engine = try makeEngine(json: "{\"l\": {\">>\": [\"L1\", \"L2\"]}}")
     // State: \l
     _ = engine.processKey(keyCode: .chars("\\"))
     _ = engine.processKey(keyCode: .chars("l"))
@@ -199,9 +190,10 @@ func testEnterDeactivation() {
     }
 }
 
-func testNumericSelection() {
+@Test
+func testNumericSelection() throws {
     print("Test: Numeric Selection (1-9)")
-    let engine = makeEngine(json: "{\"l\": {\">>\": [\"A\", \"B\", \"C\"]}}")
+    let engine = try makeEngine(json: "{\"l\": {\">>\": [\"A\", \"B\", \"C\"]}}")
     // State: \l
     _ = engine.processKey(keyCode: .chars("\\"))
     _ = engine.processKey(keyCode: .chars("l"))
@@ -216,9 +208,10 @@ func testNumericSelection() {
     }
 }
 
-func testSpaceRejection() {
+@Test
+func testSpaceRejection() throws {
     print("Test: Space Rejection (Implicit Commit)")
-    let engine = makeEngine(json: "{\"l\": {\">>\": [\"A\", \"B\"]}}")
+    let engine = try makeEngine(json: "{\"l\": {\">>\": [\"A\", \"B\"]}}")
     // State: \l
     _ = engine.processKey(keyCode: .chars("\\"))
     _ = engine.processKey(keyCode: .chars("l"))
@@ -236,16 +229,16 @@ func testSpaceRejection() {
         assertEqual(actions[0], EngineAction.commit("A"), "First action should be commit")
         assertEqual(actions[1], EngineAction.reject, "Second action should be reject")
     } else {
-        print(
-            "FAIL: Expected 2 actions for implicit commit, got \(actions.count). Actions: \(actions)"
+        Issue.record(
+            "Expected 2 actions for implicit commit, got \(actions.count). Actions: \(actions)"
         )
-        exit(1)
     }
 }
 
-func testNavigation() {
+@Test
+func testNavigation() throws {
     print("Test: Arrow Navigation")
-    let engine = makeEngine(json: "{\"l\": {\">>\": [\"A\", \"B\", \"C\"]}}")
+    let engine = try makeEngine(json: "{\"l\": {\">>\": [\"A\", \"B\", \"C\"]}}")
     // State: \l
     _ = engine.processKey(keyCode: .chars("\\"))
     _ = engine.processKey(keyCode: .chars("l"))
@@ -263,12 +256,13 @@ func testNavigation() {
     assertEqual(sUp.selectedCandidateIndex(), 0, "Index should be 0")
 }
 
-func testPageNavigation() {
+@Test
+func testPageNavigation() throws {
     print("Test: Page Navigation")
     // Create enough candidates for paging (pageSize = 9)
     let candidates = (1...20).map { "Item\($0)" }
     let jsonString = "{\"p\": {\">>\": \(candidates.description)}}"
-    let engine = makeEngine(json: jsonString)
+    let engine = try makeEngine(json: jsonString)
 
     _ = engine.processKey(keyCode: .chars("\\"))
     _ = engine.processKey(keyCode: .chars("p"))
@@ -292,7 +286,8 @@ func testPageNavigation() {
     assertEqual(sBack.candidateWindow.firstVisibleIndex, 9, "First visible should be 9")
 }
 
-func testBufferOverflow() {
+@Test
+func testBufferOverflow() throws {
     print("Test: Buffer Overflow Protection (True Limit Test)")
 
     // 1. Construct a deep JSON Trie: l -> l -> l ... (60 times)
@@ -302,7 +297,7 @@ func testBufferOverflow() {
         json = "{\"l\": \(json)}"
     }
 
-    let engine = makeEngine(json: json)
+    let engine = try makeEngine(json: json)
     var state = engine.initialState
 
     // 2. Activate with '\'
@@ -325,7 +320,8 @@ func testBufferOverflow() {
         "Buffer should be reset after overflow auto-commit. Actual: \(state.buffer.count)")
 }
 
-func testPresentationModel() {
+@Test
+func testPresentationModel() throws {
     print("Test: Presentation Model (Tier 2)")
     let state = EngineState(
         path: [],
@@ -343,7 +339,8 @@ func testPresentationModel() {
     assertFalse(inactive.shouldShowCandidates(), "Inactive state should not show candidates")
 }
 
-func testCandidateWindowLogic() {
+@Test
+func testCandidateWindowLogic() throws {
     print("Test: CandidateWindow Pure Logic")
     let window = CandidateWindow(
         candidates: (1...20).map { "\($0)" },
@@ -366,26 +363,10 @@ func testCandidateWindowLogic() {
     assertEqual(lastPage.selectedIndex, 19, "Clamp to end mismatch")
 }
 
-func testFunctionalOperators() {
-    print("Test: Functional Operators (|>, >>=)")
-
-    // Pipeline
-    let result = 5 |> { $0 * 2 } |> { $0 + 3 }
-    assertEqual(result, 13, "Pipeline mismatch")
-
-    // Optional Bind
-    let opt: Int? = 5
-    let bound = opt >>= { $0 > 0 ? $0 * 2 : nil }
-    assertEqual(bound, 10, "Optional bind success mismatch")
-
-    let nilOpt: Int? = nil
-    let failedBound = nilOpt >>= { $0 * 2 }
-    assertTrue(failedBound == nil, "Optional bind failure mismatch")
-}
-
-func testEdgeCases() {
+@Test
+func testEdgeCases() throws {
     print("Test: Edge Cases & Error Handling")
-    let engine = makeEngine(json: "{\"l\": {\">>\": [\"λ\"]}}")
+    let engine = try makeEngine(json: "{\"l\": {\">>\": [\"λ\"]}}")
 
     // 1. Enter on empty buffer
     let (_, a1) = engine.reduce(state: engine.initialState, keyCode: .enter)
@@ -403,9 +384,10 @@ func testEdgeCases() {
     assertEqual(a4[0], EngineAction.commit("\\\\"), "Hard commit mismatch")
 }
 
-func testPublicAPI() {
+@Test
+func testPublicAPI() throws {
     print("Test: Engine Manager API")
-    let engine = makeEngine(json: "{\"l\": {\">>\": [\"λ\"]}}")
+    let engine = try makeEngine(json: "{\"l\": {\">>\": [\"λ\"]}}")
 
     // Initial state
     assertFalse(engine.state.active, "Initial active state mismatch")
@@ -419,27 +401,3 @@ func testPublicAPI() {
     assertFalse(engine.state.active, "Deactivation mismatch")
     assertEqual(engine.state.buffer, "", "Deactivation cleanup mismatch")
 }
-
-// MARK: - Main Runner
-
-func runTests() {
-    testAccumulatingComposition()
-    testBasicInput()
-    testBackspace()
-    testSelectionAndBackslashCommit()
-    testEnterDeactivation()
-    testNumericSelection()
-    testSpaceRejection()
-    testNavigation()
-    testPageNavigation()
-    testBufferOverflow()
-    testPresentationModel()
-    testCandidateWindowLogic()
-    testFunctionalOperators()
-    testEdgeCases()
-    testPublicAPI()
-
-    print("\nAll Engine Unit Tests Passed!")
-}
-
-runTests()

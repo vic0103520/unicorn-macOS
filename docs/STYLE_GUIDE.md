@@ -37,7 +37,7 @@ While we prefer value types, `class` is permitted in specific scenarios:
 - **Logical Extensions:** Use `extension Engine { ... }` to group related logic into modules.
 
 ## 7. Functional Operators
-To clarify the flow of computation, Unicorn provides a set of generic operators in [`FunctionalHelpers.swift`](../unicorn/FunctionalHelpers.swift):
+To clarify the flow of computation, Unicorn provides a set of generic operators in [`FunctionalHelpers.swift`](../UnicornCore/FunctionalHelpers.swift):
 - **Pipeline (`|>`):** Use for forward application of functions (`x |> f`). Best for data transformations where naming an intermediate variable adds noise.
 - **Bind (`>>=`):** Use for chaining operations on `Optional` or `Result` types. This short-circuits nested `if let` or `guard let` chains.
 - **Avoid Custom Operators:** Do not introduce new operators beyond these two without a project-wide discussion.

@@ -6,6 +6,12 @@ BUILD_DIR = build
 CONFIG = Release
 SYMROOT = $(CURDIR)/$(BUILD_DIR)
 OBJROOT = $(SYMROOT)/obj
+NATIVE_ARCH = $(shell uname -m)
+OTHER_SUPPORTED_ARCH = $(if $(filter arm64,$(NATIVE_ARCH)),x86_64,arm64)
+TEST_ROOT = $(SYMROOT)/Test
+TEST_DERIVED_DATA = $(TEST_ROOT)/DerivedData
+TEST_RESULT_BUNDLE = $(TEST_ROOT)/Results/UnicornCoreTests.xcresult
+ARCH_VALIDATION_DERIVED_DATA = $(TEST_ROOT)/OtherArchitectureDerivedData
 # Actual built product path from xcodebuild output
 APP_BUNDLE = $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 INSTALL_DIR = $(HOME)/Library/Input Methods
@@ -98,29 +104,40 @@ install: build
 clean:
 	rm -rf $(BUILD_DIR)
 
-# Run Engine tests
+# Run hostless core tests on the current architecture, then cross-compile the app.
 test:
-	@echo "Running Engine Unit Tests..."
-	@cat unicorn/FunctionalHelpers.swift > EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicorn/KeyCode.swift >> EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicorn/Trie.swift >> EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicorn/EngineTypes.swift >> EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicorn/Engine.swift >> EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicornTests/EngineTests.swift >> EngineTestsCombined.swift
-	@swift EngineTestsCombined.swift
-	@rm EngineTestsCombined.swift
+	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
+	@rm -rf "$(TEST_ROOT)"
+	xcodebuild clean test \
+		-project $(APP_NAME).xcodeproj \
+		-scheme $(APP_NAME) \
+		-configuration Debug \
+		-destination 'platform=macOS,arch=$(NATIVE_ARCH)' \
+		-derivedDataPath "$(TEST_DERIVED_DATA)" \
+		-resultBundlePath "$(TEST_RESULT_BUNDLE)" \
+		-enableCodeCoverage YES \
+		SYMROOT="$(TEST_ROOT)/BuildProducts" \
+		OBJROOT="$(TEST_ROOT)/Intermediates" \
+		CODE_SIGN_IDENTITY="-" \
+		CODE_SIGNING_REQUIRED=YES \
+		CODE_SIGNING_ALLOWED=YES
+	@echo "Cross-compiling unicorn.app for $(OTHER_SUPPORTED_ARCH) (compile validation only)..."
+	xcodebuild clean build \
+		-project $(APP_NAME).xcodeproj \
+		-scheme $(APP_NAME) \
+		-configuration Debug \
+		-destination 'generic/platform=macOS' \
+		-derivedDataPath "$(ARCH_VALIDATION_DERIVED_DATA)" \
+		SYMROOT="$(TEST_ROOT)/OtherArchitectureBuildProducts" \
+		OBJROOT="$(TEST_ROOT)/OtherArchitectureIntermediates" \
+		ARCHS=$(OTHER_SUPPORTED_ARCH) \
+		ONLY_ACTIVE_ARCH=NO \
+		CODE_SIGN_IDENTITY="-" \
+		CODE_SIGNING_REQUIRED=YES \
+		CODE_SIGNING_ALLOWED=YES
+	@echo "Test result bundle: $(TEST_RESULT_BUNDLE)"
 
-# Check test coverage
-coverage:
-	@echo "Generating Test Coverage Report..."
-	@(cat unicorn/FunctionalHelpers.swift; echo ""; cat unicorn/KeyCode.swift; echo ""; cat unicorn/Trie.swift; echo ""; cat unicorn/EngineTypes.swift; echo ""; cat unicorn/Engine.swift; echo ""; cat unicornTests/EngineTests.swift) > CoverageCombined.swift
-	@swiftc -profile-generate -profile-coverage-mapping CoverageCombined.swift -o CoverageRunner
-	@./CoverageRunner > /dev/null
-	@xcrun llvm-profdata merge -sparse default.profraw -o default.profdata
-	@xcrun llvm-cov report ./CoverageRunner -instr-profile=default.profdata
-	@rm CoverageCombined.swift CoverageRunner default.profraw default.profdata
+# Produce a readable coverage report from the standard test result bundle.
+coverage: test
+	@echo "UnicornCore coverage from $(TEST_RESULT_BUNDLE):"
+	xcrun xccov view --report --only-targets "$(TEST_RESULT_BUNDLE)"

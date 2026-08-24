@@ -8,12 +8,33 @@
 
 /* Begin PBXBuildFile section */
 		5F86FD332EE89EDC00FE48AA /* InputMethodKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5F86FD322EE89EDC00FE48AA /* InputMethodKit.framework */; };
-		/* End PBXBuildFile section */
+		A10000000000000000000005 /* libUnicornCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* libUnicornCore.a */; };
+		A10000000000000000000006 /* libUnicornCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* libUnicornCore.a */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A1000000000000000000000E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5F86FD172EE89DBC00FE48AA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1000000000000000000000C;
+			remoteInfo = UnicornCore;
+		};
+		A10000000000000000000010 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5F86FD172EE89DBC00FE48AA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1000000000000000000000C;
+			remoteInfo = UnicornCore;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		5F86FD1F2EE89DBC00FE48AA /* unicorn.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = unicorn.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F86FD322EE89EDC00FE48AA /* InputMethodKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = InputMethodKit.framework; path = System/Library/Frameworks/InputMethodKit.framework; sourceTree = SDKROOT; };
-		/* End PBXFileReference section */
+		A10000000000000000000001 /* libUnicornCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libUnicornCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000002 /* UnicornCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = UnicornCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		5F86FD352EE89FA100FE48AA /* Exceptions for "unicorn" folder in "unicorn" target */ = {
@@ -34,6 +55,16 @@
 			path = unicorn;
 			sourceTree = "<group>";
 		};
+		A10000000000000000000003 /* UnicornCore */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = UnicornCore;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000004 /* UnicornCoreTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = UnicornCoreTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -41,6 +72,22 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000005 /* libUnicornCore.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000006 /* libUnicornCore.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -51,6 +98,8 @@
 			isa = PBXGroup;
 			children = (
 				5F86FD212EE89DBC00FE48AA /* unicorn */,
+				A10000000000000000000003 /* UnicornCore */,
+				A10000000000000000000004 /* UnicornCoreTests */,
 				5F86FD312EE89EDC00FE48AA /* Frameworks */,
 				5F86FD202EE89DBC00FE48AA /* Products */,
 			);
@@ -60,6 +109,8 @@
 			isa = PBXGroup;
 			children = (
 				5F86FD1F2EE89DBC00FE48AA /* unicorn.app */,
+				A10000000000000000000001 /* libUnicornCore.a */,
+				A10000000000000000000002 /* UnicornCoreTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -74,6 +125,16 @@
 		};
 /* End PBXGroup section */
 
+/* Begin PBXHeadersBuildPhase section */
+		A10000000000000000000019 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
 /* Begin PBXNativeTarget section */
 		5F86FD1E2EE89DBC00FE48AA /* unicorn */ = {
 			isa = PBXNativeTarget;
@@ -86,6 +147,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				A1000000000000000000000F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				5F86FD212EE89DBC00FE48AA /* unicorn */,
@@ -96,6 +158,51 @@
 			productName = unicorn;
 			productReference = 5F86FD1F2EE89DBC00FE48AA /* unicorn.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A1000000000000000000000C /* UnicornCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000012 /* Build configuration list for PBXNativeTarget "UnicornCore" */;
+			buildPhases = (
+				A10000000000000000000019 /* Headers */,
+				A10000000000000000000008 /* Sources */,
+				A10000000000000000000007 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000003 /* UnicornCore */,
+			);
+			name = UnicornCore;
+			packageProductDependencies = (
+			);
+			productName = UnicornCore;
+			productReference = A10000000000000000000001 /* libUnicornCore.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		A1000000000000000000000D /* UnicornCoreTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000015 /* Build configuration list for PBXNativeTarget "UnicornCoreTests" */;
+			buildPhases = (
+				A1000000000000000000000B /* Sources */,
+				A10000000000000000000009 /* Frameworks */,
+				A1000000000000000000000A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000011 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000004 /* UnicornCoreTests */,
+			);
+			name = UnicornCoreTests;
+			packageProductDependencies = (
+			);
+			productName = UnicornCoreTests;
+			productReference = A10000000000000000000002 /* UnicornCoreTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -108,6 +215,12 @@
 				LastUpgradeCheck = 1640;
 				TargetAttributes = {
 					5F86FD1E2EE89DBC00FE48AA = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					A1000000000000000000000C = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					A1000000000000000000000D = {
 						CreatedOnToolsVersion = 16.4;
 					};
 				};
@@ -127,12 +240,21 @@
 			projectRoot = "";
 			targets = (
 				5F86FD1E2EE89DBC00FE48AA /* unicorn */,
+				A1000000000000000000000C /* UnicornCore */,
+				A1000000000000000000000D /* UnicornCoreTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		5F86FD1D2EE89DBC00FE48AA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000000A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -149,7 +271,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A1000000000000000000000F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1000000000000000000000C /* UnicornCore */;
+			targetProxy = A1000000000000000000000E /* PBXContainerItemProxy */;
+		};
+		A10000000000000000000011 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1000000000000000000000C /* UnicornCore */;
+			targetProxy = A10000000000000000000010 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		5F86FD2C2EE89DBD00FE48AA /* Debug */ = {
@@ -288,7 +437,7 @@
 				ENABLE_APP_INTENTS_METADATA_EXTRACTION = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-								INFOPLIST_FILE = unicorn/Info.plist;
+				INFOPLIST_FILE = unicorn/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainStoryboardFile = Main;
@@ -298,7 +447,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-								MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "Vic-Shih.inputmethod.unicorn";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -322,7 +471,7 @@
 				ENABLE_APP_INTENTS_METADATA_EXTRACTION = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-								INFOPLIST_FILE = unicorn/Info.plist;
+				INFOPLIST_FILE = unicorn/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainStoryboardFile = Main;
@@ -332,12 +481,54 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-								MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "Vic-Shih.inputmethod.unicorn";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "unicorn/unicorn-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A10000000000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEFINES_MODULE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000014 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEFINES_MODULE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A10000000000000000000016 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "Vic-Shih.inputmethod.UnicornCoreTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000017 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "Vic-Shih.inputmethod.UnicornCoreTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
@@ -359,6 +550,24 @@
 			buildConfigurations = (
 				5F86FD2F2EE89DBD00FE48AA /* Debug */,
 				5F86FD302EE89DBD00FE48AA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000012 /* Build configuration list for PBXNativeTarget "UnicornCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000013 /* Debug */,
+				A10000000000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000015 /* Build configuration list for PBXNativeTarget "UnicornCoreTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000016 /* Debug */,
+				A10000000000000000000017 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

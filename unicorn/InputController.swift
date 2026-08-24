@@ -1,6 +1,7 @@
 import Cocoa
 import InputMethodKit
 import os
+import UnicornCore
 
 @objc(InputController) public class InputController: IMKInputController {
 
