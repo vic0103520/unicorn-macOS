@@ -121,6 +121,13 @@ test:
 		CODE_SIGN_IDENTITY="-" \
 		CODE_SIGNING_REQUIRED=YES \
 		CODE_SIGNING_ALLOWED=YES
+	@set -e; summary_file="$$(mktemp)"; trap 'rm -f "$$summary_file"' EXIT; \
+		xcrun xcresulttool get test-results summary --path "$(TEST_RESULT_BUNDLE)" > "$$summary_file"; \
+		result="$$(/usr/bin/plutil -extract result raw -o - "$$summary_file")"; \
+		passed="$$(/usr/bin/plutil -extract passedTests raw -o - "$$summary_file")"; \
+		failed="$$(/usr/bin/plutil -extract failedTests raw -o - "$$summary_file")"; \
+		skipped="$$(/usr/bin/plutil -extract skippedTests raw -o - "$$summary_file")"; \
+		echo "Test summary: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"
 	@echo "Cross-compiling unicorn.app for $(OTHER_SUPPORTED_ARCH) (compile validation only)..."
 	xcodebuild -quiet clean build \
 		-project $(APP_NAME).xcodeproj \
@@ -135,6 +142,7 @@ test:
 		CODE_SIGN_IDENTITY="-" \
 		CODE_SIGNING_REQUIRED=YES \
 		CODE_SIGNING_ALLOWED=YES
+	@echo "Cross-architecture build succeeded for $(OTHER_SUPPORTED_ARCH)."
 	@echo "Test result bundle: $(TEST_RESULT_BUNDLE)"
 
 # Produce a readable coverage report from the standard test result bundle.
