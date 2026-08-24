@@ -1,0 +1,25 @@
+{
+  "configurations" : [
+    {
+      "id" : "CCDD4CE5-8B64-4668-9375-9D6377832821",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:unicorn.xcodeproj",
+        "identifier" : "A2000000000000000000000D",
+        "name" : "UnicornCorePerformanceTests"
+      }
+    }
+  ],
+  "version" : 1
+}

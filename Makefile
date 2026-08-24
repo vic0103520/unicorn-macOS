@@ -31,6 +31,14 @@ TEST_DERIVED_DATA ?= $(TEST_ROOT)/DerivedData
 TEST_RESULT_BUNDLE ?= $(TEST_ROOT)/Results/UnicornCoreTests.xcresult
 TEST_APP_SYMROOT ?= $(TEST_ROOT)/UniversalBuildProducts
 TEST_APP_OBJROOT ?= $(TEST_ROOT)/UniversalBuildIntermediates
+BENCHMARK_SCHEME ?= UnicornCorePerformanceTests
+BENCHMARK_ROOT ?= $(SYMROOT)/Benchmark
+BENCHMARK_DERIVED_DATA ?= $(BENCHMARK_ROOT)/DerivedData
+BENCHMARK_RESULT_BUNDLE ?= $(BENCHMARK_ROOT)/Results/UnicornCorePerformanceTests.xcresult
+BENCHMARK_SUMMARY_DIR ?= $(BENCHMARK_ROOT)/Summary
+BENCHMARK_XCODE_SUMMARY ?= $(BENCHMARK_SUMMARY_DIR)/xcode-test-summary.json
+BENCHMARK_XCODE_METRICS ?= $(BENCHMARK_SUMMARY_DIR)/xcode-performance-metrics.json
+BENCHMARK_SUMMARY ?= $(BENCHMARK_SUMMARY_DIR)/benchmark-summary.json
 APP_BUNDLE ?= $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 APP_EXECUTABLE ?= $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 INSTALL_DIR ?= $(HOME)/Library/Input Methods
@@ -39,7 +47,8 @@ INSTALL_DIR ?= $(HOME)/Library/Input Methods
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test test-native test-summary coverage coverage-report lint format
+.PHONY: test test-native test-summary benchmark benchmark-native benchmark-summary
+.PHONY: coverage coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -185,6 +194,65 @@ test-summary:
 		exit "$$status"; \
 	fi
 	@printf '%b%s\n' "$(RESULT_LABEL)" " xcresult: path=$(TEST_RESULT_BUNDLE)"
+
+benchmark: benchmark-native
+	+@$(MAKE) --no-print-directory benchmark-summary
+
+benchmark-native:
+	@echo "Running UnicornCore benchmarks in Release on $(NATIVE_ARCH)..."
+	@rm -rf "$(BENCHMARK_ROOT)"
+	@mkdir -p "$(dir $(BENCHMARK_RESULT_BUNDLE))" "$(BENCHMARK_SUMMARY_DIR)"
+	@test ! -e "$(BENCHMARK_RESULT_BUNDLE)" || \
+		{ printf '%b%s\n' "$(FAIL_LABEL)" " Refusing stale benchmark result: path=$(BENCHMARK_RESULT_BUNDLE)"; exit 1; }
+	@if $(XCODEBUILD_COMMAND) test \
+		-project "$(XCODE_PROJECT)" \
+		-scheme "$(BENCHMARK_SCHEME)" \
+		-configuration Release \
+		-destination 'platform=macOS,arch=$(NATIVE_ARCH)' \
+		-derivedDataPath "$(BENCHMARK_DERIVED_DATA)" \
+		-resultBundlePath "$(BENCHMARK_RESULT_BUNDLE)" \
+		-only-testing:UnicornCorePerformanceTests \
+		-parallel-testing-enabled NO \
+		-enableCodeCoverage NO \
+		SYMROOT="$(BENCHMARK_ROOT)/BuildProducts" \
+		OBJROOT="$(BENCHMARK_ROOT)/Intermediates" \
+		ARCHS="$(NATIVE_ARCH)" \
+		ONLY_ACTIVE_ARCH=YES \
+		$(XCODE_SIGNING_ARGS); then \
+		:; \
+	else \
+		status=$$?; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Core benchmarks: configuration=Release arch=$(NATIVE_ARCH) exit=$$status"; \
+		exit "$$status"; \
+	fi
+
+benchmark-summary:
+	@summary_tmp="$(BENCHMARK_XCODE_SUMMARY).tmp"; \
+	metrics_tmp="$(BENCHMARK_XCODE_METRICS).tmp"; \
+	trap 'rm -f "$$summary_tmp" "$$metrics_tmp"' EXIT; \
+	if xcrun xcresulttool get test-results summary \
+		--path "$(BENCHMARK_RESULT_BUNDLE)" --compact > "$$summary_tmp" && \
+		xcrun xcresulttool get test-results metrics \
+		--path "$(BENCHMARK_RESULT_BUNDLE)" --compact > "$$metrics_tmp"; then \
+		mv "$$summary_tmp" "$(BENCHMARK_XCODE_SUMMARY)"; \
+		mv "$$metrics_tmp" "$(BENCHMARK_XCODE_METRICS)"; \
+	else \
+		status=$$?; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Benchmark summary export: xcresult=$(BENCHMARK_RESULT_BUNDLE) exit=$$status"; \
+		exit "$$status"; \
+	fi
+	@if python3 scripts/benchmark_report.py \
+		--keymap unicorn/keymap.json \
+		--test-summary "$(BENCHMARK_XCODE_SUMMARY)" \
+		--metrics "$(BENCHMARK_XCODE_METRICS)" \
+		--output "$(BENCHMARK_SUMMARY)" \
+		--artifact-path "$(BENCHMARK_ROOT)"; then \
+		printf '%b%s\n' "$(RESULT_LABEL)" " Benchmark xcresult: path=$(BENCHMARK_RESULT_BUNDLE)"; \
+	else \
+		status=$$?; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Benchmark report: output=$(BENCHMARK_SUMMARY) exit=$$status"; \
+		exit "$$status"; \
+	fi
 
 coverage: test
 	+@$(MAKE) --no-print-directory coverage-report
