@@ -38,7 +38,7 @@ After confirmation, the script recursively removes `com.apple.quarantine` from t
 
 ### Pull-request CI
 
-For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) installs SwiftLint, runs `make lint`, runs `make test`, and runs `make install`. After the test step, including when that step fails, CI uploads `build/Test/Results/UnicornCoreTests.xcresult` as the `unicorn-core-test-results` artifact with 14-day retention. The install target builds, copies the app into the runner user's input-method directory, and registers it with Launch Services.
+For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) installs SwiftLint, runs `make lint`, runs `make test`, and runs `make install`. The install target builds, copies the app into the runner user's input-method directory, and registers it with Launch Services.
 
 ### Tagged releases
 
