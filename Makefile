@@ -108,7 +108,7 @@ clean:
 test:
 	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
 	@rm -rf "$(TEST_ROOT)"
-	xcodebuild clean test \
+	xcodebuild -quiet clean test \
 		-project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration Debug \
@@ -122,7 +122,7 @@ test:
 		CODE_SIGNING_REQUIRED=YES \
 		CODE_SIGNING_ALLOWED=YES
 	@echo "Cross-compiling unicorn.app for $(OTHER_SUPPORTED_ARCH) (compile validation only)..."
-	xcodebuild clean build \
+	xcodebuild -quiet clean build \
 		-project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration Debug \
