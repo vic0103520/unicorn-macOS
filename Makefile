@@ -4,6 +4,7 @@
 APP_NAME = unicorn
 BUILD_DIR = build
 CONFIG = Release
+XCODEBUILD = xcodebuild$(if $(filter 1,$(VERBOSE)),, -quiet)
 SYMROOT = $(CURDIR)/$(BUILD_DIR)
 OBJROOT = $(SYMROOT)/obj
 NATIVE_ARCH = $(shell uname -m)
@@ -80,7 +81,7 @@ format:
 
 # Build the project using xcodebuild
 build:
-	xcodebuild -project $(APP_NAME).xcodeproj \
+	$(XCODEBUILD) -project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration $(CONFIG) \
 		-destination 'platform=macOS' \
@@ -89,6 +90,7 @@ build:
 		CODE_SIGN_IDENTITY="-" \
 		CODE_SIGNING_REQUIRED=YES \
 		CODE_SIGNING_ALLOWED=YES
+	@echo "Build succeeded: $(APP_BUNDLE)"
 
 # Install the Input Method to the user's Library
 install: build
@@ -108,7 +110,7 @@ clean:
 test:
 	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
 	@rm -rf "$(TEST_ROOT)"
-	xcodebuild -quiet clean test \
+	$(XCODEBUILD) clean test \
 		-project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration Debug \
@@ -129,7 +131,7 @@ test:
 		skipped="$$(/usr/bin/plutil -extract skippedTests raw -o - "$$summary_file")"; \
 		echo "Test summary: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"
 	@echo "Cross-compiling unicorn.app for $(OTHER_SUPPORTED_ARCH) (compile validation only)..."
-	xcodebuild -quiet clean build \
+	$(XCODEBUILD) clean build \
 		-project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration Debug \
