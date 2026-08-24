@@ -2,18 +2,45 @@
 
 # Variables
 APP_NAME = unicorn
-BUILD_DIR = build
-CONFIG = Release
-SYMROOT = $(CURDIR)/$(BUILD_DIR)
-OBJROOT = $(SYMROOT)/obj
-# Actual built product path from xcodebuild output
-APP_BUNDLE = $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
-INSTALL_DIR = $(HOME)/Library/Input Methods
+XCODE_PROJECT ?= $(APP_NAME).xcodeproj
+XCODE_SCHEME ?= $(APP_NAME)
+BUILD_DIR ?= build
+CONFIG ?= Release
+ARCHS ?= arm64 x86_64
+VERBOSE ?= 0
+NO_COLOR ?= 0
+
+XCODEBUILD ?= xcodebuild
+XCODEBUILD_FLAGS = $(if $(filter 1,$(VERBOSE)),,-quiet)
+XCODEBUILD_COMMAND = $(strip $(XCODEBUILD) $(XCODEBUILD_FLAGS))
+XCODE_PROJECT_ARGS = -project "$(XCODE_PROJECT)" -scheme "$(XCODE_SCHEME)"
+XCODE_SIGNING_ARGS = \
+	CODE_SIGN_IDENTITY="-" \
+	CODE_SIGNING_REQUIRED=YES \
+	CODE_SIGNING_ALLOWED=YES
+
+PASS_LABEL = $(if $(filter 1,$(NO_COLOR)),[PASS],\033[1;32m[PASS]\033[0m)
+FAIL_LABEL = $(if $(filter 1,$(NO_COLOR)),[FAIL],\033[1;31m[FAIL]\033[0m)
+RESULT_LABEL = $(if $(filter 1,$(NO_COLOR)),[RESULT],\033[1;36m[RESULT]\033[0m)
+
+SYMROOT ?= $(abspath $(BUILD_DIR))
+OBJROOT ?= $(SYMROOT)/obj
+NATIVE_ARCH ?= $(shell uname -m)
+TEST_ROOT ?= $(SYMROOT)/Test
+TEST_DERIVED_DATA ?= $(TEST_ROOT)/DerivedData
+TEST_RESULT_BUNDLE ?= $(TEST_ROOT)/Results/UnicornCoreTests.xcresult
+TEST_APP_SYMROOT ?= $(TEST_ROOT)/UniversalBuildProducts
+TEST_APP_OBJROOT ?= $(TEST_ROOT)/UniversalBuildIntermediates
+APP_BUNDLE ?= $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
+APP_EXECUTABLE ?= $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
+INSTALL_DIR ?= $(HOME)/Library/Input Methods
 
 # Automatically detect the GitHub repository name (e.g., owner/repo)
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
-.PHONY: all build install build-debug install-debug clean test lint format coverage test-release clean-test-releases
+.PHONY: all build build-universal build-debug install install-debug clean
+.PHONY: test test-native test-summary coverage coverage-report lint format
+.PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
 
@@ -72,17 +99,30 @@ lint:
 format:
 	swiftlint --fix
 
-# Build the project using xcodebuild
-build:
-	xcodebuild -project $(APP_NAME).xcodeproj \
-		-scheme $(APP_NAME) \
-		-configuration $(CONFIG) \
-		-destination 'platform=macOS' \
-		SYMROOT=$(SYMROOT) \
-		OBJROOT=$(OBJROOT) \
-		CODE_SIGN_IDENTITY="-" \
-		CODE_SIGNING_REQUIRED=YES \
-		CODE_SIGNING_ALLOWED=YES
+build: build-universal
+
+build-universal:
+	@if $(XCODEBUILD_COMMAND) $(XCODE_PROJECT_ARGS) \
+		-configuration "$(CONFIG)" \
+		-destination 'generic/platform=macOS' \
+		SYMROOT="$(SYMROOT)" \
+		OBJROOT="$(OBJROOT)" \
+		ARCHS="$(ARCHS)" \
+		ONLY_ACTIVE_ARCH=NO \
+		$(XCODE_SIGNING_ARGS); then \
+		:; \
+	else \
+		status=$$?; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " App build: configuration=$(CONFIG) archs=$(ARCHS) exit=$$status"; \
+		exit "$$status"; \
+	fi
+	@if /usr/bin/lipo "$(APP_EXECUTABLE)" -verify_arch $(ARCHS); then \
+		printf '%b%s\n' "$(PASS_LABEL)" " App build: configuration=$(CONFIG) archs=$(ARCHS) path=$(APP_BUNDLE)"; \
+	else \
+		status=$$?; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " App architecture verification: archs=$(ARCHS) path=$(APP_EXECUTABLE) exit=$$status"; \
+		exit "$$status"; \
+	fi
 
 # Install the Input Method to the user's Library
 install: build
@@ -96,31 +136,59 @@ install: build
 
 # Clean build artifacts
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf "$(BUILD_DIR)"
 
-# Run Engine tests
-test:
-	@echo "Running Engine Unit Tests..."
-	@cat unicorn/FunctionalHelpers.swift > EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicorn/KeyCode.swift >> EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicorn/Trie.swift >> EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicorn/EngineTypes.swift >> EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicorn/Engine.swift >> EngineTestsCombined.swift
-	@echo "" >> EngineTestsCombined.swift
-	@cat unicornTests/EngineTests.swift >> EngineTestsCombined.swift
-	@swift EngineTestsCombined.swift
-	@rm EngineTestsCombined.swift
+test: test-native
+	+@$(MAKE) --no-print-directory build-universal \
+		CONFIG=Debug \
+		ARCHS="$(ARCHS)" \
+		SYMROOT="$(TEST_APP_SYMROOT)" \
+		OBJROOT="$(TEST_APP_OBJROOT)"
 
-# Check test coverage
-coverage:
-	@echo "Generating Test Coverage Report..."
-	@(cat unicorn/FunctionalHelpers.swift; echo ""; cat unicorn/KeyCode.swift; echo ""; cat unicorn/Trie.swift; echo ""; cat unicorn/EngineTypes.swift; echo ""; cat unicorn/Engine.swift; echo ""; cat unicornTests/EngineTests.swift) > CoverageCombined.swift
-	@swiftc -profile-generate -profile-coverage-mapping CoverageCombined.swift -o CoverageRunner
-	@./CoverageRunner > /dev/null
-	@xcrun llvm-profdata merge -sparse default.profraw -o default.profdata
-	@xcrun llvm-cov report ./CoverageRunner -instr-profile=default.profdata
-	@rm CoverageCombined.swift CoverageRunner default.profraw default.profdata
+test-native:
+	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
+	@rm -rf "$(TEST_ROOT)"
+	@if $(XCODEBUILD_COMMAND) clean test $(XCODE_PROJECT_ARGS) \
+		-configuration Debug \
+		-destination 'platform=macOS,arch=$(NATIVE_ARCH)' \
+		-derivedDataPath "$(TEST_DERIVED_DATA)" \
+		-resultBundlePath "$(TEST_RESULT_BUNDLE)" \
+		-enableCodeCoverage YES \
+		SYMROOT="$(TEST_ROOT)/BuildProducts" \
+		OBJROOT="$(TEST_ROOT)/Intermediates" \
+		$(XCODE_SIGNING_ARGS); then \
+		:; \
+	else \
+		status=$$?; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Native tests: arch=$(NATIVE_ARCH) exit=$$status"; \
+		exit "$$status"; \
+	fi
+	+@$(MAKE) --no-print-directory test-summary
+
+test-summary:
+	@summary_file="$$(mktemp)" || { printf '%b%s\n' "$(FAIL_LABEL)" " Test summary: unable to create temporary file"; exit 1; }; \
+	trap 'rm -f "$$summary_file"' EXIT; \
+	if xcrun xcresulttool get test-results summary --path "$(TEST_RESULT_BUNDLE)" > "$$summary_file" && \
+		result="$$(/usr/bin/plutil -extract result raw -o - "$$summary_file")" && \
+		passed="$$(/usr/bin/plutil -extract passedTests raw -o - "$$summary_file")" && \
+		failed="$$(/usr/bin/plutil -extract failedTests raw -o - "$$summary_file")" && \
+		skipped="$$(/usr/bin/plutil -extract skippedTests raw -o - "$$summary_file")"; then \
+		if [ "$$result" = "Passed" ] && [ "$$failed" -eq 0 ]; then \
+			printf '%b%s\n' "$(PASS_LABEL)" " Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
+		else \
+			printf '%b%s\n' "$(FAIL_LABEL)" " Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
+			exit 1; \
+		fi; \
+	else \
+		status=$$?; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Test summary: xcresult=$(TEST_RESULT_BUNDLE) exit=$$status"; \
+		exit "$$status"; \
+	fi
+	@printf '%b%s\n' "$(RESULT_LABEL)" " xcresult: path=$(TEST_RESULT_BUNDLE)"
+
+coverage: test
+	+@$(MAKE) --no-print-directory coverage-report
+
+coverage-report:
+	@printf '%b%s\n' "$(RESULT_LABEL)" " UnicornCore coverage: xcresult=$(TEST_RESULT_BUNDLE)"
+	@xcrun xccov view --report --only-targets "$(TEST_RESULT_BUNDLE)"

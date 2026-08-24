@@ -37,10 +37,16 @@ make install
 make coverage
 ```
 
-- `make test` runs the combined Swift engine test suite in `unicornTests/EngineTests.swift`.
-- `make build` performs a Release build by default and overrides Xcode signing with the ad-hoc identity `-`.
+- `make test` runs the hostless `UnicornCoreTests` bundle on the host architecture with coverage enabled, then builds a Debug app for arm64 and x86_64 and verifies both slices with `lipo`. Only the host-architecture tests execute.
+- Test diagnostics and coverage data are stored in `build/Test/Results/UnicornCoreTests.xcresult`. All test intermediates stay under the ignored `build/Test/` directory.
+- `make coverage` reruns the standard test path and prints a readable report from that `.xcresult` bundle.
+- `make build` performs a universal arm64 and x86_64 Release build by default and overrides Xcode signing with the ad-hoc identity `-`; override `ARCHS` to request different slices.
+- `make test-native`, `make test-summary`, `make build-universal`, and `make coverage-report` expose the reusable stages behind the standard targets.
 - `make install` builds, replaces the app in `~/Library/Input Methods/`, and registers it with Launch Services.
-- `make coverage` produces a command-line coverage report for the engine test bundle.
+
+The hostless suite uses Swift Testing for engine transitions, trie-backed lookup, candidates, history, limits, and presentation calculations.
+
+Core tests exercise the public engine manager seam but do not launch `unicorn.app`, an `IMKServer`, or the candidate panel. InputMethodKit lifecycle, marked-text behavior, candidate UI, and event handling in real clients require installing and enabling the input source and validating it in actual client applications. Universal compilation and hostless tests do not replace that end-to-end validation or validate the minimum supported macOS version.
 
 Release targets (`release`, `test-release`, `re-release`, and `clean-test-releases`) mutate local and remote Git or GitHub state. Inspect their definitions in the Makefile and use them only with explicit release intent.
 
@@ -48,14 +54,14 @@ Use standard `git` commands for local repository state such as branches, commits
 
 ## Key Paths
 
-- `unicorn/Engine.swift`: state transition engine.
-- `unicorn/EngineTypes.swift`: state, actions, candidate paging, and presentation model.
+- `UnicornCore/Engine.swift`: state transition engine.
+- `UnicornCore/EngineTypes.swift`: state, actions, candidate paging, and presentation model.
+- `UnicornCore/KeyCode.swift`: macOS event normalization.
+- `UnicornCore/Trie.swift`: immutable symbol trie.
+- `UnicornCore/FunctionalHelpers.swift`: the project's `|>` and `>>=` operators.
+- `UnicornCoreTests/EngineTests.swift`: Swift Testing engine and presentation-model tests.
 - `unicorn/InputController.swift`: InputMethodKit integration.
-- `unicorn/KeyCode.swift`: macOS event normalization.
-- `unicorn/Trie.swift`: immutable symbol trie.
-- `unicorn/FunctionalHelpers.swift`: the project's `|>` and `>>=` operators.
 - `unicorn/keymap.json`: bundled symbol data.
-- `unicornTests/EngineTests.swift`: engine and presentation-model tests.
 - `.github/workflows/`: pull-request CI and tagged-release automation.
 
 ## Maintaining this file

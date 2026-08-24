@@ -1,6 +1,7 @@
 included:
   - unicorn
-  - unicornTests
+  - UnicornCore
+  - UnicornCoreTests
 
 excluded:
   - build

@@ -1,0 +1,24 @@
+{
+  "configurations" : [
+    {
+      "id" : "23998B9A-2E36-4DF2-9646-2E0A9C7E9304",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:unicorn.xcodeproj",
+        "identifier" : "5F6E84AE303C182C00C6CB24",
+        "name" : "UnicornCoreTests"
+      }
+    }
+  ],
+  "version" : 1
+}
