@@ -5,6 +5,9 @@ APP_NAME = unicorn
 BUILD_DIR = build
 CONFIG = Release
 XCODEBUILD = xcodebuild$(if $(filter 1,$(VERBOSE)),, -quiet)
+PASS_LABEL = $(if $(filter 1,$(NO_COLOR)),[PASS],\033[1;32m[PASS]\033[0m)
+FAIL_LABEL = $(if $(filter 1,$(NO_COLOR)),[FAIL],\033[1;31m[FAIL]\033[0m)
+RESULT_LABEL = $(if $(filter 1,$(NO_COLOR)),[RESULT],\033[1;36m[RESULT]\033[0m)
 SYMROOT = $(CURDIR)/$(BUILD_DIR)
 OBJROOT = $(SYMROOT)/obj
 NATIVE_ARCH = $(shell uname -m)
@@ -81,7 +84,7 @@ format:
 
 # Build the project using xcodebuild
 build:
-	$(XCODEBUILD) -project $(APP_NAME).xcodeproj \
+	@if $(XCODEBUILD) -project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration $(CONFIG) \
 		-destination 'platform=macOS' \
@@ -89,8 +92,13 @@ build:
 		OBJROOT=$(OBJROOT) \
 		CODE_SIGN_IDENTITY="-" \
 		CODE_SIGNING_REQUIRED=YES \
-		CODE_SIGNING_ALLOWED=YES
-	@echo "Build succeeded: $(APP_BUNDLE)"
+		CODE_SIGNING_ALLOWED=YES; then \
+		printf '%b\n' "$(PASS_LABEL) App build: configuration=$(CONFIG) path=$(APP_BUNDLE)"; \
+	else \
+		status=$$?; \
+		printf '%b\n' "$(FAIL_LABEL) App build: configuration=$(CONFIG) exit=$$status"; \
+		exit "$$status"; \
+	fi
 
 # Install the Input Method to the user's Library
 install: build
@@ -110,7 +118,7 @@ clean:
 test:
 	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
 	@rm -rf "$(TEST_ROOT)"
-	$(XCODEBUILD) clean test \
+	@if $(XCODEBUILD) clean test \
 		-project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration Debug \
@@ -122,16 +130,34 @@ test:
 		OBJROOT="$(TEST_ROOT)/Intermediates" \
 		CODE_SIGN_IDENTITY="-" \
 		CODE_SIGNING_REQUIRED=YES \
-		CODE_SIGNING_ALLOWED=YES
-	@set -e; summary_file="$$(mktemp)"; trap 'rm -f "$$summary_file"' EXIT; \
-		xcrun xcresulttool get test-results summary --path "$(TEST_RESULT_BUNDLE)" > "$$summary_file"; \
-		result="$$(/usr/bin/plutil -extract result raw -o - "$$summary_file")"; \
-		passed="$$(/usr/bin/plutil -extract passedTests raw -o - "$$summary_file")"; \
-		failed="$$(/usr/bin/plutil -extract failedTests raw -o - "$$summary_file")"; \
-		skipped="$$(/usr/bin/plutil -extract skippedTests raw -o - "$$summary_file")"; \
-		echo "Test summary: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"
+		CODE_SIGNING_ALLOWED=YES; then \
+		:; \
+	else \
+		status=$$?; \
+		printf '%b\n' "$(FAIL_LABEL) Tests: arch=$(NATIVE_ARCH) exit=$$status"; \
+		exit "$$status"; \
+	fi
+	@summary_file="$$(mktemp)" || { printf '%b\n' "$(FAIL_LABEL) Test summary: unable to create temporary file"; exit 1; }; \
+	trap 'rm -f "$$summary_file"' EXIT; \
+	if xcrun xcresulttool get test-results summary --path "$(TEST_RESULT_BUNDLE)" > "$$summary_file" && \
+		result="$$(/usr/bin/plutil -extract result raw -o - "$$summary_file")" && \
+		passed="$$(/usr/bin/plutil -extract passedTests raw -o - "$$summary_file")" && \
+		failed="$$(/usr/bin/plutil -extract failedTests raw -o - "$$summary_file")" && \
+		skipped="$$(/usr/bin/plutil -extract skippedTests raw -o - "$$summary_file")"; then \
+		if [ "$$result" = "Passed" ] && [ "$$failed" -eq 0 ]; then \
+			printf '%b\n' "$(PASS_LABEL) Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
+		else \
+			printf '%b\n' "$(FAIL_LABEL) Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
+			exit 1; \
+		fi; \
+	else \
+		status=$$?; \
+		printf '%b\n' "$(FAIL_LABEL) Test summary: xcresult=$(TEST_RESULT_BUNDLE) exit=$$status"; \
+		exit "$$status"; \
+	fi
+	@printf '%b\n' "$(RESULT_LABEL) xcresult: path=$(TEST_RESULT_BUNDLE)"
 	@echo "Cross-compiling unicorn.app for $(OTHER_SUPPORTED_ARCH) (compile validation only)..."
-	$(XCODEBUILD) clean build \
+	@if $(XCODEBUILD) clean build \
 		-project $(APP_NAME).xcodeproj \
 		-scheme $(APP_NAME) \
 		-configuration Debug \
@@ -143,9 +169,13 @@ test:
 		ONLY_ACTIVE_ARCH=NO \
 		CODE_SIGN_IDENTITY="-" \
 		CODE_SIGNING_REQUIRED=YES \
-		CODE_SIGNING_ALLOWED=YES
-	@echo "Cross-architecture build succeeded for $(OTHER_SUPPORTED_ARCH)."
-	@echo "Test result bundle: $(TEST_RESULT_BUNDLE)"
+		CODE_SIGNING_ALLOWED=YES; then \
+		printf '%b\n' "$(PASS_LABEL) Cross-architecture build: arch=$(OTHER_SUPPORTED_ARCH)"; \
+	else \
+		status=$$?; \
+		printf '%b\n' "$(FAIL_LABEL) Cross-architecture build: arch=$(OTHER_SUPPORTED_ARCH) exit=$$status"; \
+		exit "$$status"; \
+	fi
 
 # Produce a readable coverage report from the standard test result bundle.
 coverage: test
