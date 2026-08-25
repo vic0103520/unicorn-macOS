@@ -725,12 +725,20 @@ private func postKey(keyCode: CGKeyCode, label: String, outputPath: String) thro
 private func cleanupSources(statePath: String, outputPath: String) throws -> Int32 {
     let state = readJSON(path: statePath)
     let dvorakInitiallyEnabled = state["dvorakInitiallyEnabled"] as? Bool ?? false
+    let originalSourceID = state["initialCurrentSourceID"] as? String ?? usID
+    let originalSourceType = state["initialCurrentSourceType"] as? String ?? layoutType
     let before = snapshotValue(label: "immediately-before-cleanup")
 
-    let usMatches = exactMatches(in: allSources(), identifier: usID, expectedType: layoutType)
-    let restoreEnableStatus = usMatches.count == 1 ? TISEnableInputSource(usMatches[0]) : nil
-    let refreshedUS = exactMatches(in: allSources(), identifier: usID, expectedType: layoutType)
-    let restoreSelectStatus = refreshedUS.count == 1 ? TISSelectInputSource(refreshedUS[0]) : nil
+    let originalMatches = exactMatches(
+        in: allSources(), identifier: originalSourceID, expectedType: originalSourceType
+    )
+    let restoreEnableStatus = originalMatches.count == 1
+        ? TISEnableInputSource(originalMatches[0]) : nil
+    let refreshedOriginal = exactMatches(
+        in: allSources(), identifier: originalSourceID, expectedType: originalSourceType
+    )
+    let restoreSelectStatus = refreshedOriginal.count == 1
+        ? TISSelectInputSource(refreshedOriginal[0]) : nil
     Thread.sleep(forTimeInterval: 0.3)
 
     let squirrelTargets = allSources().filter {
@@ -774,17 +782,6 @@ private func cleanupSources(statePath: String, outputPath: String) throws -> Int
     }
     Thread.sleep(forTimeInterval: 0.3)
 
-    let running = NSRunningApplication.runningApplications(
-        withBundleIdentifier: squirrelBundleID
-    )
-    let terminateRequested = running.map { $0.terminate() }.filter { $0 }.count
-    Thread.sleep(forTimeInterval: 0.5)
-    let remaining = NSRunningApplication.runningApplications(
-        withBundleIdentifier: squirrelBundleID
-    )
-    let forceTerminateRequested = remaining.map { $0.forceTerminate() }.filter { $0 }.count
-    Thread.sleep(forTimeInterval: 0.5)
-
     let after = snapshotValue(label: "after-cleanup")
     let currentID = (after["current"] as? [String: Any])?["inputSourceID"] as? String
     let afterSources = after["sources"] as? [[String: Any]] ?? []
@@ -794,23 +791,24 @@ private func cleanupSources(statePath: String, outputPath: String) throws -> Int
     let dvorakRestored = dvorakInitiallyEnabled
         || afterSources.first { ($0["inputSourceID"] as? String) == dvorakID }?["enabled"] as? Bool == false
     let success = restoreSelectStatus == noErr
-        && currentID == usID
+        && currentID == originalSourceID
         && squirrelDisabled
         && dvorakRestored
     let value: [String: Any] = [
         "timestamp": timestamp(),
         "success": success,
         "dvorakInitiallyEnabled": dvorakInitiallyEnabled,
+        "originalSourceID": originalSourceID,
+        "originalSourceType": originalSourceType,
         "restoreEnableStatus": jsonValue(restoreEnableStatus),
         "restoreSelectStatus": jsonValue(restoreSelectStatus),
         "squirrelDisableResults": squirrelDisableResults,
         "squirrelDisableRefreshAttempts": disableRefreshAttempts,
         "dvorakDisableStatus": jsonValue(dvorakDisableStatus),
-        "terminateRequested": terminateRequested,
-        "forceTerminateRequested": forceTerminateRequested,
+        "squirrelProcessTerminationAttemptedBySourceCleanup": false,
         "before": before,
         "after": after,
-        "restoredUS": currentID == usID,
+        "restoredOriginalSource": currentID == originalSourceID,
         "squirrelSourcesDisabled": squirrelDisabled,
         "dvorakStateRestored": dvorakRestored,
     ]

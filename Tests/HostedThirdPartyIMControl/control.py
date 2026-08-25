@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded Dvorak/Squirrel selectability diagnosis on hosted ARM64 macOS."""
+"""Bounded Squirrel direct-launch counterfactual on hosted ARM64 macOS."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import json
 import os
 import pathlib
 import plistlib
+import shutil
 import subprocess
 import sys
 import time
@@ -23,7 +24,7 @@ if SHARED_SPEC is None or SHARED_SPEC.loader is None:
 shared = importlib.util.module_from_spec(SHARED_SPEC)
 SHARED_SPEC.loader.exec_module(shared)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BUNDLE_ID = "im.rime.inputmethod.Squirrel"
 PARENT_ID = "im.rime.inputmethod.Squirrel"
 MODE_ID = "im.rime.inputmethod.Squirrel.Hans"
@@ -42,9 +43,10 @@ ASSET_SHA256 = "614746013212937623d5bbab9901e9c43d1ec937aa32307d6b6092a05e308287
 ASSET_URL = "https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg"
 RELEASE_URL = "https://github.com/rime/squirrel/releases/tag/1.1.2"
 SOURCE_URL = "https://github.com/rime/squirrel"
-FIRST_SELECTABLE_RUN_URL = (
-    "https://github.com/vic0103520/unicorn-macOS/actions/runs/32828379686"
+VERIFIED_ACTIVATION_FAILURE_RUN_URL = (
+    "https://github.com/vic0103520/unicorn-macOS/actions/runs/32830534336"
 )
+DIRECT_LAUNCH_DEADLINE_SECONDS = 20
 
 
 def load_json(path: pathlib.Path, default: Any = None) -> Any:
@@ -79,6 +81,7 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
             "createdAt": shared.timestamp(),
             "selectionStarted": False,
             "dvorakInitiallyEnabled": False,
+            "directLaunch": None,
             "trackedPaths": [
                 {"path": str(path), "existedBefore": path.exists()}
                 for path in tracked_paths
@@ -89,7 +92,7 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
         evidence / "summary.json",
         {
             "schemaVersion": SCHEMA_VERSION,
-            "probe": "github-hosted-arm64-dvorak-squirrel-selectability-diagnosis",
+            "probe": "github-hosted-arm64-squirrel-direct-launch-counterfactual",
             "status": "running",
             "startedAt": shared.timestamp(),
             "actionsRunURL": github_run_url(),
@@ -97,12 +100,17 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
                 "runnerLabel": "macos-15",
                 "expectedArchitecture": "arm64",
                 "sourcesUnderDiagnosis": [DVORAK_ID, BUNDLE_ID],
+                "primaryCounterfactualCount": 1,
+                "primaryCounterfactual": "direct execution of the exact signed Squirrel executable as runner",
                 "thirdPartyProductCount": 1,
                 "thirdPartyProduct": "official Rime Squirrel 1.1.2",
                 "screenshotsDiagnosticOnly": True,
                 "passFailUsesOCRPixelsOrCoordinates": False,
                 "productBehaviorChanged": False,
                 "privatePreferenceOrAuthorizationDatabaseEdited": False,
+                "packageInstallerOrPostinstallExecuted": False,
+                "systemInputMethodsDirectoryUsed": False,
+                "securityWeakened": False,
             },
             "authoritativeContract": {
                 "api": "TISSelectInputSource",
@@ -120,22 +128,28 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
                 "squirrelParent": {"sourceID": PARENT_ID, "type": PARENT_TYPE},
                 "squirrelMode": {"sourceID": MODE_ID, "type": MODE_TYPE},
             },
-            "cleanHostedRepeat": {
-                "isRepeat": True,
-                "priorRunURL": FIRST_SELECTABLE_RUN_URL,
-                "priorResult": "The exact parent enable request plus exact Allow action made the parent eligible; public selection then returned 0 and made Squirrel Hans current.",
-                "reason": "Squirrel became selectable, so the documented transition sequence is repeated from a fresh GitHub-hosted macos-15 runner.",
+            "verifiedStartingPoint": {
+                "priorRunURL": VERIFIED_ACTIVATION_FAILURE_RUN_URL,
+                "priorResult": "Exact Squirrel Hans became enabled, select-capable, selected, and current after parent enablement plus exact Allow, but automatic activation failed before process creation with LaunchInputMethod status -50, no Squirrel PID, no endpoint, and no composition.",
+                "reusedWithoutBroadReinvestigation": [
+                    "pinned publisher provenance checks",
+                    "safe payload extraction and user-local copy",
+                    "Rime prebuild",
+                    "exact registration, parent/mode enablement, and Allow sequence",
+                    "Dvorak public selection and physical-event control",
+                    "focused AppKit client and deterministic nihao-space composition proof",
+                ],
             },
             "smallestCounterfactual": {
-                "transition": f"Request public enablement of exact parent {PARENT_ID} before exact mode {MODE_ID}, complete the exact Allow action, refresh both live TISInputSourceRefs, then select only {MODE_ID}.",
-                "whySmallest": "The prior hosted Squirrel run enabled and approved the Hans mode while its documented input-method parent remained disabled; the new variable is the exact parent enable request before mode enablement and approval.",
-                "disconfirmingEvidenceRetained": [
-                    "Dvorak transitions in the same Aqua session",
-                    "all Dvorak and Squirrel property snapshots",
-                    "before/after snapshots for every selection attempt",
-                    "bounded Text Input Services log windows",
-                    "current-source, process, and physical-key/composition evidence",
+                "transition": "After the verified setup and exact approval sequence, execute the no-argument signed Squirrel executable directly as runner, wait a bounded deadline for the exact PID and setIMKXPCEndpoint, then select Hans and compose only if both boundaries pass.",
+                "whySmallest": "Only the automatic LaunchServices/imklaunchagent startup boundary is bypassed. The product, payload, user, path, provenance, registration, data, approval, source, client, and physical events remain unchanged.",
+                "explicitOutcomes": [
+                    "process exits before endpoint",
+                    "process lives but no endpoint",
+                    "process lives plus endpoint but composition fails",
+                    "process lives, endpoint registers, and composition succeeds",
                 ],
+                "causalClaimLimit": "Success isolates automatic LaunchServices/session resolution. Exit or no endpoint reports only the earliest observed application boundary.",
             },
             "assertions": {
                 "dvorakPhysicalKey": {
@@ -530,6 +544,9 @@ def update_initial_dvorak_state(evidence: pathlib.Path, snapshot: dict[str, Any]
     state_path = evidence / "installation-state.json"
     state = load_json(state_path, {})
     state["dvorakInitiallyEnabled"] = dvorak.get("enabled") is True
+    current = snapshot.get("data", {}).get("current", {})
+    state["initialCurrentSourceID"] = current.get("inputSourceID")
+    state["initialCurrentSourceType"] = current.get("type")
     write_json(state_path, state)
 
 
@@ -689,6 +706,434 @@ def process_snapshot() -> dict[str, Any]:
         ["pgrep", "-alf", "Squirrel|imklaunchagent"], timeout=15
     )
     return value
+
+
+def exact_process_snapshot(pid: int, executable: pathlib.Path) -> dict[str, Any]:
+    return {
+        "timestamp": shared.timestamp(),
+        "expectedPID": pid,
+        "expectedExecutablePath": str(executable),
+        "exactPID": shared.run_command(
+            [
+                "ps",
+                "-p",
+                str(pid),
+                "-o",
+                "pid=,ppid=,uid=,user=,state=,etime=,lstart=,comm=,args=",
+            ],
+            timeout=10,
+        ),
+        "relevantProcesses": process_snapshot(),
+    }
+
+
+def endpoint_events(
+    path: pathlib.Path, expected_pid: int | None = None
+) -> list[dict[str, Any]]:
+    parsed: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        parsed.append(event)
+    peer_marker = (
+        f"setxpcendpoint.peer[{expected_pid}]" if expected_pid is not None else None
+    )
+    peer_events = [
+        event
+        for event in parsed
+        if peer_marker
+        and peer_marker in str(event.get("eventMessage", "")).lower()
+    ]
+    if expected_pid is not None and not peer_events:
+        return []
+    events: list[dict[str, Any]] = []
+    for event in parsed:
+        message = str(event.get("eventMessage", ""))
+        if "Received setIMKXPCEndpoint:forBundleIdentifier: from InputMethod" in message:
+            events.append(
+                {
+                    "timestamp": event.get("timestamp"),
+                    "process": event.get("process"),
+                    "processImagePath": event.get("processImagePath"),
+                    "subsystem": event.get("subsystem"),
+                    "category": event.get("category"),
+                    "eventMessage": message,
+                    "exactPIDPeerCorrelation": expected_pid is not None,
+                    "expectedPID": expected_pid,
+                    "peerEvents": [
+                        {
+                            "timestamp": peer.get("timestamp"),
+                            "processImagePath": peer.get("processImagePath"),
+                            "eventMessage": peer.get("eventMessage"),
+                        }
+                        for peer in peer_events[:8]
+                    ],
+                }
+            )
+    return events
+
+
+def diagnostic_reports() -> list[dict[str, Any]]:
+    directories = [
+        pathlib.Path.home() / "Library" / "Logs" / "DiagnosticReports",
+        pathlib.Path("/Library/Logs/DiagnosticReports"),
+    ]
+    reports: list[dict[str, Any]] = []
+    for directory in directories:
+        try:
+            candidates = list(directory.glob("Squirrel*"))
+        except OSError:
+            candidates = []
+        for path in candidates:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            reports.append(
+                {
+                    "path": str(path),
+                    "size": stat.st_size,
+                    "modifiedAtEpoch": stat.st_mtime,
+                }
+            )
+    return sorted(reports, key=lambda item: str(item["path"]))
+
+
+def capture_direct_log_show(
+    evidence: pathlib.Path,
+    started_at: str,
+    completed_at: str | None = None,
+    expected_pid: int | None = None,
+) -> dict[str, Any]:
+    start = parse_timestamp(started_at) - dt.timedelta(seconds=1)
+    end = parse_timestamp(completed_at) + dt.timedelta(seconds=1) if completed_at else None
+    predicate = (
+        '(subsystem CONTAINS[c] "TextInput" '
+        'OR subsystem CONTAINS[c] "LaunchServices" '
+        'OR subsystem CONTAINS[c] "RunningBoard" '
+        'OR subsystem CONTAINS[c] "InputMethodKit" '
+        'OR process == "Squirrel" '
+        'OR process == "imklaunchagent" '
+        'OR process == "lsd" '
+        'OR process == "launchservicesd" '
+        'OR process == "runningboardd" '
+        'OR process == "amfid" '
+        'OR process == "taskgated" '
+        'OR process == "syspolicyd" '
+        'OR process == "ReportCrash" '
+        'OR process == "CrashReporterSupportHelper" '
+        'OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel" '
+        'OR eventMessage CONTAINS[c] "LaunchInputMethod" '
+        'OR eventMessage CONTAINS[c] "IMKXPCEndpoint" '
+        'OR eventMessage CONTAINS[c] "dyld")'
+    )
+    command = [
+        "/usr/bin/log",
+        "show",
+        "--start",
+        start.astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
+    ]
+    if end:
+        command.extend(
+            ["--end", end.astimezone().strftime("%Y-%m-%d %H:%M:%S%z")]
+        )
+    command.extend(
+        ["--style", "ndjson", "--info", "--debug", "--predicate", predicate]
+    )
+    completed = subprocess.run(
+        command, capture_output=True, text=True, timeout=45, check=False
+    )
+    all_lines = completed.stdout.splitlines()
+    lines = (
+        all_lines
+        if len(all_lines) <= 4_000
+        else [
+            *all_lines[:2_000],
+            '{"boundedEvidence":"middle log lines omitted"}',
+            *all_lines[-2_000:],
+        ]
+    )
+    path = evidence / "direct-launch-log-show.jsonl"
+    path.write_text("\n".join(lines) + ("\n" if lines else ""))
+    metadata = {
+        "command": command,
+        "exitCode": completed.returncode,
+        "sourceLineCount": len(all_lines),
+        "retainedLineCount": len(lines),
+        "retainedHeadAndTailLimit": 4_000,
+        "path": path.name,
+        "stderr": shared.bounded(completed.stderr, 32_768),
+        "endpointEvents": endpoint_events(path, expected_pid),
+        "endpointCorrelationExpectedPID": expected_pid,
+    }
+    write_json(evidence / "direct-launch-log-show-metadata.json", metadata)
+    return metadata
+
+
+def start_direct_launch(
+    evidence: pathlib.Path, installed_app: pathlib.Path
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    executable = installed_app / "Contents" / "MacOS" / EXECUTABLE_NAME
+    working_directory = installed_app / "Contents" / "SharedSupport"
+    process_preflight = process_snapshot()
+    write_json(evidence / "direct-launch-preflight-process.json", process_preflight)
+    if process_preflight.get("processCount") != 0:
+        raise RuntimeError(
+            "Refusing direct launch because a pre-existing Squirrel process is present"
+        )
+    reports_before = diagnostic_reports()
+    stream_path = evidence / "direct-launch-unified-log.jsonl"
+    stream_stderr_path = evidence / "direct-launch-unified-log.stderr"
+    stdout_path = evidence / "direct-launch-stdout.log"
+    stderr_path = evidence / "direct-launch-stderr.log"
+    timeline_path = evidence / "direct-launch-process-timeline.jsonl"
+    predicate = (
+        '(subsystem CONTAINS[c] "TextInput" '
+        'OR subsystem CONTAINS[c] "LaunchServices" '
+        'OR subsystem CONTAINS[c] "RunningBoard" '
+        'OR subsystem CONTAINS[c] "InputMethodKit" '
+        'OR process == "Squirrel" OR process == "imklaunchagent" '
+        'OR process == "lsd" OR process == "launchservicesd" '
+        'OR process == "runningboardd" OR process == "amfid" '
+        'OR process == "taskgated" OR process == "syspolicyd" '
+        'OR process == "ReportCrash" OR process == "CrashReporterSupportHelper" '
+        'OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel" '
+        'OR eventMessage CONTAINS[c] "LaunchInputMethod" '
+        'OR eventMessage CONTAINS[c] "IMKXPCEndpoint" '
+        'OR eventMessage CONTAINS[c] "dyld")'
+    )
+    stream_stdout = stream_path.open("w")
+    stream_stderr = stream_stderr_path.open("w")
+    stream_started_at = shared.timestamp()
+    stream_process = subprocess.Popen(
+        [
+            "/usr/bin/log",
+            "stream",
+            "--style",
+            "ndjson",
+            "--level",
+            "debug",
+            "--predicate",
+            predicate,
+        ],
+        stdout=stream_stdout,
+        stderr=stream_stderr,
+        text=True,
+    )
+    time.sleep(0.5)
+
+    stdout_handle = stdout_path.open("w")
+    stderr_handle = stderr_path.open("w")
+    launched_at = shared.timestamp()
+    process = subprocess.Popen(
+        [str(executable)],
+        cwd=working_directory,
+        stdout=stdout_handle,
+        stderr=stderr_handle,
+        text=True,
+    )
+    state_path = evidence / "installation-state.json"
+    state = load_json(state_path, {})
+    state["directLaunch"] = {
+        "pid": process.pid,
+        "executablePath": str(executable),
+        "launchedAt": launched_at,
+        "launchedByUID": os.getuid(),
+        "arguments": [],
+    }
+    write_json(state_path, state)
+
+    result: dict[str, Any] = {
+        "startedAt": launched_at,
+        "loggingStartedAt": stream_started_at,
+        "loggingStartedBeforeLaunch": parse_timestamp(stream_started_at)
+        <= parse_timestamp(launched_at),
+        "deadlineSeconds": DIRECT_LAUNCH_DEADLINE_SECONDS,
+        "launchMethod": "direct no-argument execution by the runner user",
+        "runnerUID": os.getuid(),
+        "runnerUser": os.environ.get("USER"),
+        "executablePath": str(executable),
+        "workingDirectory": str(working_directory),
+        "pid": process.pid,
+        "stdoutPath": stdout_path.name,
+        "stderrPath": stderr_path.name,
+        "streamLogPath": stream_path.name,
+        "streamLogStderrPath": stream_stderr_path.name,
+        "processTimelinePath": timeline_path.name,
+        "diagnosticReportsBefore": reports_before,
+    }
+    deadline = time.monotonic() + DIRECT_LAUNCH_DEADLINE_SECONDS
+    observations: list[dict[str, Any]] = []
+    observed_endpoint_events: list[dict[str, Any]] = []
+    while time.monotonic() < deadline:
+        snapshot = exact_process_snapshot(process.pid, executable)
+        snapshot["popenExitStatus"] = process.poll()
+        observations.append(snapshot)
+        with timeline_path.open("a") as timeline:
+            timeline.write(json.dumps(snapshot, sort_keys=True) + "\n")
+        observed_endpoint_events = endpoint_events(stream_path, process.pid)
+        if process.poll() is not None or observed_endpoint_events:
+            break
+        time.sleep(0.25)
+
+    readiness_completed_at = shared.timestamp()
+    shown = capture_direct_log_show(
+        evidence, launched_at, readiness_completed_at, process.pid
+    )
+    observed_endpoint_events = observed_endpoint_events or shown["endpointEvents"]
+    natural_status = process.poll()
+    result.update(
+        {
+            "readinessCompletedAt": readiness_completed_at,
+            "readinessObservationCount": len(observations),
+            "processAliveAtReadiness": natural_status is None,
+            "naturalExitStatusAtReadiness": natural_status,
+            "endpointObserved": bool(observed_endpoint_events),
+            "endpointObservedAtReadiness": bool(observed_endpoint_events),
+            "endpointEvents": observed_endpoint_events,
+            "firstProcessSnapshot": observations[0] if observations else None,
+            "lastProcessSnapshotAtReadiness": observations[-1] if observations else None,
+        }
+    )
+    runtime = {
+        "process": process,
+        "streamProcess": stream_process,
+        "stdoutHandle": stdout_handle,
+        "stderrHandle": stderr_handle,
+        "streamStdout": stream_stdout,
+        "streamStderr": stream_stderr,
+        "executable": executable,
+    }
+    write_json(evidence / "direct-launch.json", result)
+    return result, runtime
+
+
+def finish_direct_launch(
+    evidence: pathlib.Path,
+    result: dict[str, Any],
+    runtime: dict[str, Any],
+    composition: dict[str, Any] | None,
+) -> dict[str, Any]:
+    process: subprocess.Popen[str] = runtime["process"]
+    executable: pathlib.Path = runtime["executable"]
+    result["processBeforeExactCleanup"] = exact_process_snapshot(
+        process.pid, executable
+    )
+    natural_status = process.poll()
+    result["processAliveBeforeExactCleanup"] = natural_status is None
+    result["naturalExitStatusBeforeExactCleanup"] = natural_status
+    result["exactTerminationRequested"] = False
+    result["exactForceTerminationRequested"] = False
+    if natural_status is None:
+        result["exactTerminationRequested"] = True
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            result["exactForceTerminationRequested"] = True
+            process.kill()
+            process.wait(timeout=3)
+    result["finalExitStatus"] = process.returncode
+    result["completedAt"] = shared.timestamp()
+    result["processAfterExactCleanup"] = exact_process_snapshot(
+        process.pid, executable
+    )
+    runtime["stdoutHandle"].close()
+    runtime["stderrHandle"].close()
+
+    time.sleep(0.5)
+    stream_process: subprocess.Popen[str] = runtime["streamProcess"]
+    stream_process.terminate()
+    try:
+        stream_process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        stream_process.kill()
+        stream_process.wait(timeout=2)
+    runtime["streamStdout"].close()
+    runtime["streamStderr"].close()
+    result["unifiedLogStreamExitStatus"] = stream_process.returncode
+    shown = capture_direct_log_show(
+        evidence,
+        result["startedAt"],
+        result["completedAt"],
+        process.pid,
+    )
+    result["endpointEvents"] = shown["endpointEvents"] or result.get(
+        "endpointEvents", []
+    )
+    result["endpointObserved"] = bool(result["endpointEvents"])
+
+    before_paths = {
+        item["path"] for item in result.get("diagnosticReportsBefore", [])
+    }
+    reports_after = diagnostic_reports()
+    created_reports = [
+        item for item in reports_after if item["path"] not in before_paths
+    ]
+    retained_reports: list[dict[str, Any]] = []
+    for index, item in enumerate(created_reports, start=1):
+        source = pathlib.Path(str(item["path"]))
+        destination = evidence / f"direct-launch-crash-{index}{source.suffix}"
+        try:
+            with source.open("rb") as handle:
+                destination.write_bytes(handle.read(1_048_576))
+            retained_reports.append(
+                {**item, "retainedPath": destination.name, "retainedByteLimit": 1_048_576}
+            )
+        except OSError as error:
+            retained_reports.append({**item, "retentionError": str(error)})
+    result["diagnosticReportsAfter"] = reports_after
+    result["newDiagnosticReports"] = retained_reports
+
+    composition_passed = bool(
+        composition
+        and composition.get("actualSelectionAndActivationProven") is True
+    )
+    endpoint_ready = result.get("endpointObservedAtReadiness") is True
+    if not result.get("processAliveAtReadiness") and not endpoint_ready:
+        classification = "process-exits-before-endpoint"
+        earliest = "direct application process exit before endpoint registration"
+    elif result.get("processAliveAtReadiness") and not endpoint_ready:
+        classification = "process-lives-but-no-endpoint"
+        earliest = "live direct application process without setIMKXPCEndpoint by the bounded deadline"
+    elif not result.get("processAliveAtReadiness"):
+        classification = "process-exits-after-endpoint-before-composition"
+        earliest = "direct application process exit after endpoint registration"
+    elif composition_passed and result.get("processAliveBeforeExactCleanup"):
+        classification = "process-lives-endpoint-registers-composition-succeeds"
+        earliest = "none observed through deterministic composition"
+    else:
+        classification = "process-lives-endpoint-registers-composition-fails"
+        earliest = (
+            "composition or process lifetime after a live process and endpoint registration"
+        )
+    result["outcome"] = {
+        "classification": classification,
+        "processExitedBeforeEndpoint": classification
+        == "process-exits-before-endpoint",
+        "processLivesButNoEndpoint": classification
+        == "process-lives-but-no-endpoint",
+        "processLivesPlusEndpointButCompositionFails": classification
+        == "process-lives-endpoint-registers-composition-fails",
+        "processLivesEndpointRegistersCompositionSucceeds": classification
+        == "process-lives-endpoint-registers-composition-succeeds",
+        "earliestObservedApplicationBoundary": earliest,
+        "automaticLaunchServicesSessionResolutionIsolated": classification
+        == "process-lives-endpoint-registers-composition-succeeds",
+        "causalClaimLimit": (
+            "Only a full direct-launch success isolates automatic LaunchServices/session resolution; all other outcomes report the earliest observed boundary without assigning root cause."
+        ),
+    }
+    write_json(evidence / "direct-launch.json", result)
+    return result
 
 
 def timeline_entries(path: pathlib.Path) -> list[dict[str, Any]]:
@@ -938,19 +1383,22 @@ def run_control(
     report: dict[str, Any] = {
         "startedAt": shared.timestamp(),
         "stageOrder": [
-            "same-session Dvorak public and Accessibility controls",
-            "Squirrel registration",
-            "exact parent enablement",
-            "exact intended mode enablement",
-            "exact Accessibility Allow action",
-            "public TIS selection",
-            "semantic Accessibility input-menu selection",
-            "current-source, process, and physical-key/composition proof",
+            "same-session Dvorak public selection and physical-event control",
+            "verified Squirrel registration, exact parent/mode enablement, and exact Allow action",
+            "bounded unified logging started before direct no-argument executable launch",
+            "exact direct PID lifetime and setIMKXPCEndpoint readiness",
+            "exact Hans public selection and deterministic composition only after process-plus-endpoint readiness",
+            "exact current-source, process, endpoint, composition, and cleanup evidence",
         ],
+        "primaryCounterfactualCount": 1,
         "server": {},
     }
     appium_process = None
     appium_handle = None
+    direct_runtime: dict[str, Any] | None = None
+    direct_result: dict[str, Any] | None = None
+    composition: dict[str, Any] | None = None
+    direct_finish_attempted = False
     completed = False
     try:
         driver, appium_process, appium_handle, report["server"] = start_appium(
@@ -983,29 +1431,32 @@ def run_control(
         report["dvorakPublicKeyProof"] = dvorak_key_proof(
             driver, helper, client_app, evidence, "public-api"
         )
-        report["restoreUSAfterDvorakPublic"] = native_transition(
+        report["restoreOriginalAfterDvorakControl"] = native_transition(
             helper,
             evidence,
-            "restore-us-after-dvorak-public",
-            ["select", US_ID, LAYOUT_TYPE, "-"],
-        )
-        report["dvorakMenuSelection"] = menu_selection(
-            driver,
-            helper,
-            evidence,
-            "dvorak",
-            DVORAK_ID,
-            "Dvorak",
-            "U.S.",
-        )
-        report["dvorakMenuKeyProof"] = dvorak_key_proof(
-            driver, helper, client_app, evidence, "accessibility-menu"
-        )
-        report["restoreUSBeforeSquirrel"] = native_transition(
-            helper,
-            evidence,
-            "restore-us-before-squirrel",
-            ["select", US_ID, LAYOUT_TYPE, "-"],
+            "restore-original-after-dvorak-control",
+            [
+                "select",
+                str(
+                    nested(
+                        initial,
+                        "data",
+                        "current",
+                        "inputSourceID",
+                        default=US_ID,
+                    )
+                ),
+                str(
+                    nested(
+                        initial,
+                        "data",
+                        "current",
+                        "type",
+                        default=LAYOUT_TYPE,
+                    )
+                ),
+                "-",
+            ],
         )
 
         report["squirrelRegistration"] = native_transition(
@@ -1029,41 +1480,52 @@ def run_control(
         report["systemSettingsApproval"] = approve_system_settings(
             driver, helper, evidence
         )
-        report["squirrelPublicSelection"] = native_transition(
-            helper,
-            evidence,
-            "squirrel-public-selection",
-            ["select", MODE_ID, MODE_TYPE, PARENT_ID],
-        )
-        report["squirrelPublicComposition"] = squirrel_composition_proof(
-            driver, helper, client_app, evidence, "public-api"
-        )
 
-        if report["squirrelPublicSelection"]["data"].get("selectionVerified"):
-            report["restoreUSBetweenSquirrelAttempts"] = native_transition(
+        direct_result, direct_runtime = start_direct_launch(evidence, installed_app)
+        report["directLaunch"] = direct_result
+        readiness = (
+            direct_result.get("processAliveAtReadiness") is True
+            and direct_result.get("endpointObserved") is True
+        )
+        if readiness:
+            report["squirrelPublicSelection"] = native_transition(
                 helper,
                 evidence,
-                "restore-us-between-squirrel-attempts",
-                ["select", US_ID, LAYOUT_TYPE, "-"],
+                "squirrel-public-selection-after-direct-readiness",
+                ["select", MODE_ID, MODE_TYPE, PARENT_ID],
             )
+            composition = squirrel_composition_proof(
+                driver, helper, client_app, evidence, "direct-launch-public-api"
+            )
+            report["squirrelPublicComposition"] = composition
         else:
-            report["restoreUSBetweenSquirrelAttempts"] = {
+            current = source_snapshot(
+                helper,
+                evidence,
+                "input-sources-after-direct-launch-not-ready.json",
+                "after-direct-launch-readiness-failed-before-selection",
+            )
+            reason = (
+                "The exact direct process exited before endpoint registration."
+                if not direct_result.get("processAliveAtReadiness")
+                else "The exact direct process lived but no setIMKXPCEndpoint was observed by the bounded deadline."
+            )
+            report["squirrelPublicSelection"] = {
                 "attempted": False,
-                "reason": "Public selection left U.S. current, so no restore transition was needed.",
+                "reason": reason,
+                "currentSourceEvidence": current,
+            }
+            report["squirrelPublicComposition"] = {
+                "attempted": False,
+                "reason": reason,
+                "currentSourceEvidence": current,
             }
 
-        report["squirrelMenuSelection"] = menu_selection(
-            driver,
-            helper,
-            evidence,
-            "squirrel",
-            MODE_ID,
-            "Squirrel - Simplified",
-            "U.S.",
+        direct_finish_attempted = True
+        direct_result = finish_direct_launch(
+            evidence, direct_result, direct_runtime, composition
         )
-        report["squirrelMenuComposition"] = squirrel_composition_proof(
-            driver, helper, client_app, evidence, "accessibility-menu"
-        )
+        report["directLaunch"] = direct_result
         report["finalSourcesBeforeCleanup"] = source_snapshot(
             helper,
             evidence,
@@ -1078,6 +1540,23 @@ def run_control(
             "timestamp": shared.timestamp(),
         }
     finally:
+        if (
+            direct_runtime is not None
+            and direct_result is not None
+            and not direct_finish_attempted
+        ):
+            direct_finish_attempted = True
+            try:
+                direct_result = finish_direct_launch(
+                    evidence, direct_result, direct_runtime, composition
+                )
+                report["directLaunch"] = direct_result
+            except Exception as error:
+                report["directLaunchCleanupError"] = {
+                    "type": type(error).__name__,
+                    "message": shared.bounded(str(error)),
+                    "timestamp": shared.timestamp(),
+                }
         if appium_process is not None and appium_handle is not None:
             stop_appium(appium_process, appium_handle, report["server"])
     report["completedAt"] = shared.timestamp()
@@ -1116,279 +1595,148 @@ def relevant_source(snapshot: dict[str, Any], source_id: str) -> dict[str, Any]:
 def final_diagnosis(
     summary: dict[str, Any], report: dict[str, Any]
 ) -> dict[str, Any]:
-    registration = nested(report, "squirrelRegistration", "data", default={})
-    parent_enable = nested(report, "squirrelParentEnable", "data", default={})
-    mode_enable = nested(report, "squirrelModeEnable", "data", default={})
+    direct = report.get("directLaunch", {})
+    outcome = direct.get("outcome") or {
+        "classification": "not-established",
+        "earliestObservedApplicationBoundary": "experiment did not reach direct launch",
+    }
+    selection = nested(report, "squirrelPublicSelection", "data", default={})
+    composition = report.get("squirrelPublicComposition", {})
+    dvorak = nested(report, "dvorakPublicSelection", "data", default={})
     approval = report.get("systemSettingsApproval", {})
-    public = nested(report, "squirrelPublicSelection", "data", default={})
-    menu = report.get("squirrelMenuSelection", {})
-    dvorak_public = nested(report, "dvorakPublicSelection", "data", default={})
-    dvorak_menu = report.get("dvorakMenuSelection", {})
-    public_composition = report.get("squirrelPublicComposition", {})
-    menu_composition = report.get("squirrelMenuComposition", {})
-
-    registration_after = registration.get("after", {})
-    parent_after = parent_enable.get("after", {})
-    mode_after = mode_enable.get("after", {})
-    approval_before = nested(
-        approval, "sourceImmediatelyBeforeAllow", "data", default={}
-    )
     approval_after = nested(
-        approval, "sourceImmediatelyAfterAllow", "data", default={}
+        approval,
+        "sourceImmediatelyAfterAllow",
+        "data",
+        "prerequisites",
+        "squirrelHans",
+        default={},
     )
-    public_prerequisites = public.get(
-        "documentedPrerequisitesImmediatelyBefore", {}
+    final_current = nested(
+        report,
+        "finalSourcesBeforeCleanup",
+        "data",
+        "current",
+        default={},
     )
-    target_before_public = relevant_source(public.get("before", {}), MODE_ID)
-    parent_before_public = relevant_source(public.get("before", {}), PARENT_ID)
-    approval_before_prerequisites = nested(
-        approval_before, "prerequisites", "squirrelHans", default={}
-    )
-    approval_after_prerequisites = nested(
-        approval_after, "prerequisites", "squirrelHans", default={}
-    )
-
-    wrong_parent_or_mode = not (
-        public_prerequisites.get("exactTargetUnique") is True
-        and public_prerequisites.get("exactParentUnique") is True
-        and public_prerequisites.get("parentModeRelationshipEstablished") is True
-    )
-    select_capable_false = target_before_public.get("selectCapable") is not True
-    source_disabled = target_before_public.get("enabled") is not True
-    parent_disabled = parent_before_public.get("enabled") is not True
-    all_prerequisites = (
-        public_prerequisites.get(
-            "allDocumentedSelectionPrerequisitesSatisfied"
-        )
-        is True
-    )
-    public_rejected = public.get("status") == -50
-    public_selected = public.get("selectionVerified") is True
-    menu_selected = menu.get("selectionVerified") is True
-    actual_activation = (
-        public_composition.get("actualSelectionAndActivationProven") is True
-        or menu_composition.get("actualSelectionAndActivationProven") is True
-    )
-    public_imk = public_composition.get("boundedIMKLaunchEvidence", {})
-    menu_imk = menu_composition.get("boundedIMKLaunchEvidence", {})
-    imk_launch_failure = (
-        public_imk.get("imkLaunchFailureObserved") is True
-        or menu_imk.get("imkLaunchFailureObserved") is True
-    )
-    squirrel_process_observed = (
-        public_composition.get("processObserved") is True
-        or menu_composition.get("processObserved") is True
-    )
-    approval_changed_eligibility = (
-        approval_before_prerequisites != approval_after_prerequisites
-    )
-    approval_no_change = (
-        approval.get("semanticAllowVerified") is True
-        and approval.get("allowClicked") is True
-        and not approval_changed_eligibility
-    )
-
-    parent_after_registration = relevant_source(registration_after, PARENT_ID)
-    parent_after_enable = relevant_source(parent_after, PARENT_ID)
-    parent_after_approval = relevant_source(approval_after, PARENT_ID)
-    mode_after_enable = relevant_source(mode_after, MODE_ID)
-    parent_enable_request_accepted_but_pending = (
-        parent_enable.get("status") == 0
-        and parent_after_registration.get("enabled") is False
-        and parent_after_enable.get("enabled") is False
-    )
-    allow_fixed_parent_prerequisite = (
-        approval.get("semanticAllowVerified") is True
-        and approval.get("allowClicked") is True
-        and parent_after_enable.get("enabled") is False
-        and parent_after_approval.get("enabled") is True
-    )
-    documented_sequence_fixed_parent = (
-        parent_enable_request_accepted_but_pending
-        and allow_fixed_parent_prerequisite
-    )
-
-    if actual_activation:
-        unresolved = "none: Squirrel became current and process plus deterministic composition proved activation"
-    elif public_selected or menu_selected:
-        unresolved = (
-            "activation after current-source selection: Dvorak produced its deterministic physical-key mapping, while Squirrel recorded no process, IMK launch failure/no endpoint, and no expected committed composition"
-            if imk_launch_failure
-            else "activation after current-source selection: Dvorak produced its deterministic physical-key mapping, while Squirrel had no process plus expected committed composition proof"
-        )
-    elif all_prerequisites and public_rejected:
-        unresolved = (
-            "public selection outcome: Dvorak returned 0 and became current, while exact Squirrel Hans returned -50 and stayed non-current despite every documented prerequisite being true"
-        )
-    elif wrong_parent_or_mode:
-        unresolved = "exact parent/mode identity or documented relationship"
-    elif select_capable_false:
-        unresolved = "target select-capable property was not true"
-    elif source_disabled:
-        unresolved = "intended Squirrel mode was disabled"
-    elif parent_disabled:
-        unresolved = "documented Squirrel parent input method was disabled"
-    else:
-        unresolved = "selection outcome was not established"
-
-    bounded_contradiction = all_prerequisites and public_rejected and not public_selected
-    if bounded_contradiction:
-        conclusion = (
-            "Bounded contradiction: immediately before the exact public selection call, Squirrel Hans was uniquely identified, select-capable, enabled, related to one enabled parent input method, and refreshed live; TISSelectInputSource still returned paramErr (-50), meaning the source was not selectable. No private policy explanation is asserted."
-        )
-    elif actual_activation:
-        conclusion = (
-            "Actual Squirrel selection and activation succeeded, proven by the exact current source, a live Squirrel process, and deterministic committed composition."
-        )
-    elif public_selected or menu_selected:
-        conclusion = (
-            "Squirrel became the exact current source, but actual activation was not proven: no Squirrel process appeared and deterministic composition failed. The bounded IMK log recorded a LaunchInputMethod failure and/or no endpoint."
-            if imk_launch_failure
-            else "Squirrel became the exact current source, but process plus deterministic composition did not fully prove activation."
-        )
-    else:
-        conclusion = (
-            "Squirrel selection was not established; the first unsatisfied documented prerequisite or exact-source relationship is reported without a private policy explanation."
-        )
-
-    dvorak_key_passed = (
-        nested(report, "dvorakPublicKeyProof", "passed") is True
-    )
+    classification = outcome.get("classification", "not-established")
+    conclusions = {
+        "process-exits-before-endpoint": (
+            "The exact direct Squirrel process exited before endpoint registration. The retained exit status, stdout/stderr, crash reports, process timeline, and security/dyld logs define the earliest observed application boundary; no deeper cause is asserted."
+        ),
+        "process-lives-but-no-endpoint": (
+            "The exact direct Squirrel process remained alive but did not register setIMKXPCEndpoint by the bounded deadline. The earliest observed boundary is endpoint registration; no deeper cause is asserted."
+        ),
+        "process-lives-endpoint-registers-composition-fails": (
+            "Direct Squirrel startup and endpoint registration succeeded, but exact-current Hans plus deterministic composition did not complete successfully. Automatic LaunchServices/session resolution is not claimed as the sole cause because composition still failed."
+        ),
+        "process-lives-endpoint-registers-composition-succeeds": (
+            "The exact direct Squirrel process remained alive, registered setIMKXPCEndpoint, exact Hans became current, and physical n i h a o Space committed the expected text. This isolates the prior failure to automatic LaunchServices/session resolution rather than Squirrel startup or endpoint behavior, without choosing a more specific cause."
+        ),
+        "process-exits-after-endpoint-before-composition": (
+            "The exact direct Squirrel process registered an endpoint and then exited before composition. The process exit is the earliest observed application boundary; no deeper cause is asserted."
+        ),
+    }
     return {
-        "contractClassification": {
-            "falseSelectCapableProperty": select_capable_false,
-            "disabledSource": source_disabled,
-            "disabledParent": parent_disabled,
-            "wrongParentOrModeChoice": wrong_parent_or_mode,
-            "uiApprovalNotChangingEligibility": approval_no_change,
-            "apiRejectionDespiteEveryDocumentedPrerequisite": bounded_contradiction,
-            "squirrelBecameCurrent": public_selected or menu_selected,
-            "actualSuccessfulSquirrelSelection": actual_activation,
-            "actualSquirrelSelectionAndActivationProven": actual_activation,
-        },
-        "documentedPrerequisitesImmediatelyBeforePublicSelection": public_prerequisites,
-        "publicSelection": {
-            "status": public.get("status"),
-            "paramErrMeansSourceIsNotSelectable": public.get(
-                "paramErrMeansSourceIsNotSelectable"
+        "primaryCounterfactualCount": report.get("primaryCounterfactualCount"),
+        "primaryCounterfactual": summary.get("smallestCounterfactual"),
+        "outcome": outcome,
+        "conclusion": conclusions.get(
+            classification,
+            "The direct-launch outcome was not established; no causal claim is made.",
+        ),
+        "directApplicationBoundary": {
+            "exactExecutablePath": direct.get("executablePath"),
+            "runnerUID": direct.get("runnerUID"),
+            "pid": direct.get("pid"),
+            "loggingStartedBeforeLaunch": direct.get("loggingStartedBeforeLaunch"),
+            "processAliveAtReadiness": direct.get("processAliveAtReadiness"),
+            "naturalExitStatusAtReadiness": direct.get(
+                "naturalExitStatusAtReadiness"
             ),
-            "selectionVerifiedByCurrentSource": public_selected,
+            "naturalExitStatusBeforeExactCleanup": direct.get(
+                "naturalExitStatusBeforeExactCleanup"
+            ),
+            "finalExitStatusAfterExactCleanup": direct.get("finalExitStatus"),
+            "endpointObservedAtReadiness": direct.get(
+                "endpointObservedAtReadiness"
+            ),
+            "endpointObservedInFullWindow": direct.get("endpointObserved"),
+            "endpointEvents": direct.get("endpointEvents", []),
+            "newDiagnosticReports": direct.get("newDiagnosticReports", []),
+            "stdoutPath": direct.get("stdoutPath"),
+            "stderrPath": direct.get("stderrPath"),
+            "processTimelinePath": direct.get("processTimelinePath"),
+            "unifiedLogPaths": [
+                direct.get("streamLogPath"),
+                "direct-launch-log-show.jsonl",
+                "system-log.jsonl",
+            ],
         },
-        "semanticInputMenuSelection": {
-            "targetPressed": menu.get("targetPressed", False),
-            "selectionVerifiedByCurrentSource": menu_selected,
-            "error": menu.get("error"),
-            "menuBarCandidatesRetained": len(menu.get("menuBarCandidates", [])),
-        },
-        "actualSelectionProof": {
-            "becameExactCurrentSource": public_selected or menu_selected,
-            "squirrelProcessObserved": squirrel_process_observed,
-            "imkLaunchFailureObserved": imk_launch_failure,
-            "publicPathIMKLaunchEvidence": public_imk,
-            "menuPathIMKLaunchEvidence": menu_imk,
-            "publicPathDeterministicComposition": {
-                "sourceSelectedAtDelivery": public_composition.get(
-                    "sourceSelectedAtDelivery", False
-                ),
-                "actualTextScalars": nested(
-                    public_composition,
-                    "finalClientDiagnostics",
-                    "textScalars",
-                    default=[],
-                ),
-                "expectedTextScalars": EXPECTED_SCALARS,
-                "passed": public_composition.get(
-                    "exactTextAssertionPassed", False
-                ),
-            },
-            "menuPathDeterministicComposition": {
-                "sourceSelectedAtDelivery": menu_composition.get(
-                    "sourceSelectedAtDelivery", False
-                ),
-                "actualTextScalars": nested(
-                    menu_composition,
-                    "finalClientDiagnostics",
-                    "textScalars",
-                    default=[],
-                ),
-                "expectedTextScalars": EXPECTED_SCALARS,
-                "passed": menu_composition.get(
-                    "exactTextAssertionPassed", False
-                ),
-            },
-            "actualSuccessfulSelectionAndActivationProven": actual_activation,
-        },
-        "approvalEligibilityComparison": {
-            "before": approval_before_prerequisites,
-            "after": approval_after_prerequisites,
-            "changed": approval_changed_eligibility,
+        "verifiedSetupSequence": {
             "exactAllowActionProven": (
                 approval.get("semanticAllowVerified") is True
                 and approval.get("allowClicked") is True
             ),
+            "allSelectionPrerequisitesTrueAfterAllow": approval_after.get(
+                "allDocumentedSelectionPrerequisitesSatisfied"
+            )
+            is True,
+            "packagePostinstallExecuted": False,
+            "privateDatabaseEdited": False,
         },
-        "smallestCounterfactualResult": {
-            "transition": summary.get("smallestCounterfactual", {}).get(
-                "transition"
+        "exactSourceAndComposition": {
+            "selectionAttempted": report.get("squirrelPublicSelection", {}).get(
+                "attempted", True
             ),
-            "parentWasDisabledAfterRegistration": (
-                parent_after_registration.get("enabled") is False
+            "selectionStatus": selection.get("status"),
+            "selectionVerified": selection.get("selectionVerified") is True,
+            "finalCurrentSource": final_current,
+            "compositionAttempted": composition.get("attempted") is True,
+            "markedCompositionObserved": composition.get(
+                "markedCompositionObserved"
             ),
-            "parentEnableRequestStatus": parent_enable.get("status"),
-            "parentEnableRequestAcceptedButEligibilityPending": parent_enable_request_accepted_but_pending,
-            "exactAllowActionChangedParentEnabledFalseToTrue": allow_fixed_parent_prerequisite,
-            "exactParentEnabledAfterAllow": (
-                parent_after_approval.get("enabled") is True
+            "committedTextScalars": nested(
+                composition,
+                "finalClientDiagnostics",
+                "textScalars",
+                default=[],
             ),
-            "intendedModeBecameEnabled": mode_after_enable.get("enabled") is True,
-            "minimalDocumentedSequenceFixedParentPrerequisite": documented_sequence_fixed_parent,
-            "minimalDocumentedSequenceWasSufficientForSelection": (
-                documented_sequence_fixed_parent and (public_selected or menu_selected)
-            ),
-            "disconfirmedAsSufficient": (
-                documented_sequence_fixed_parent
-                and not (public_selected or menu_selected)
-            ),
+            "expectedTextScalars": EXPECTED_SCALARS,
+            "compositionPassed": composition.get(
+                "actualSelectionAndActivationProven"
+            )
+            is True,
         },
         "sameSessionDvorakControl": {
-            "publicStatus": dvorak_public.get("status"),
-            "publicSelectionVerified": dvorak_public.get("selectionVerified", False),
-            "semanticMenuSelectionVerified": dvorak_menu.get(
-                "selectionVerified", False
-            ),
-            "physicalKeyCode37ProducedN": dvorak_key_passed,
+            "publicStatus": dvorak.get("status"),
+            "publicSelectionVerified": dvorak.get("selectionVerified") is True,
+            "physicalKeyCode37ProducedN": nested(
+                report, "dvorakPublicKeyProof", "passed"
+            )
+            is True,
+            "role": "selection, focus, and physical-event control only",
         },
-        "earliestObservedDivergence": (
-            "after registration: Dvorak needed no parent, while Squirrel Hans had a documented parent with enabled=false"
-            if parent_after_registration.get("enabled") is False
-            else "no disabled Squirrel parent was observed after registration"
+        "evidenceBoundaries": {
+            "currentSourceRetained": True,
+            "compositionOutcomeRetained": True,
+            "markedAndCommittedTextRetainedWhenAttempted": composition.get(
+                "attempted"
+            )
+            is True,
+            "endpointRetained": True,
+            "processBirthAndLifetimeRetained": True,
+            "stdoutStderrAndExitStatusRetained": True,
+            "crashDyldSecurityLaunchServicesRunningBoardIMKLogsRetained": True,
+            "cleanupRetained": True,
+        },
+        "causalClaimLimit": (
+            "Only direct process, endpoint, and composition success isolates automatic LaunchServices/session resolution. Any exit, no-endpoint, or composition failure reports the earliest observed boundary without assigning a deeper cause."
         ),
-        "earliestUnresolvedDivergenceAfterDocumentedTransitions": unresolved,
-        "boundedContradiction": bounded_contradiction,
         "privatePolicyExplanationAsserted": False,
-        "conclusion": conclusion,
-        "disconfirmingEvidence": {
-            "dvorakPublicSelectionAndPhysicalMapping": (
-                dvorak_public.get("selectionVerified") is True and dvorak_key_passed
-            ),
-            "squirrelParentDisabledAfterRegistration": (
-                parent_after_registration.get("enabled") is False
-            ),
-            "squirrelParentEnabledBeforeSelection": (
-                parent_before_public.get("enabled") is True
-            ),
-            "squirrelModeSelectCapableBeforeSelection": (
-                target_before_public.get("selectCapable") is True
-            ),
-            "squirrelModeEnabledBeforeSelection": (
-                target_before_public.get("enabled") is True
-            ),
-            "accessibilityMenuAttemptRetained": menu.get("attempted", False),
-            "currentSourceSnapshotsRetained": True,
-            "processAndCompositionAttemptsRetained": True,
-            "boundedTISLogWindowsRetained": True,
-        },
-        "scopeLimit": "This diagnosis is evidence only and authorizes no implementation, security, runner, or infrastructure change.",
+        "scopeLimit": (
+            "One Squirrel direct-launch counterfactual only; no installer scripts, system installation, private database edits, security weakening, second product, or persistent infrastructure."
+        ),
     }
 
 

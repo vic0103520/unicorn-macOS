@@ -48,14 +48,28 @@ limits = {
     "appium.log": 2_097_152,
     "npm-install.log": 1_048_576,
     "appium-driver-install.log": 1_048_576,
-    "system-log.jsonl": 2_097_152,
+    "system-log.jsonl": 4_194_304,
+    "direct-launch-unified-log.jsonl": 4_194_304,
+    "direct-launch-unified-log.stderr": 262_144,
+    "direct-launch-stdout.log": 1_048_576,
+    "direct-launch-stderr.log": 1_048_576,
+    "direct-launch-process-timeline.jsonl": 1_048_576,
     "processes-final.txt": 262_144,
     "squirrel-build.log": 1_048_576,
 }
 for name, maximum in limits.items():
     path = root / name
     if path.exists() and path.stat().st_size > maximum:
-        path.write_bytes(b"[truncated to bounded tail]\n" + path.read_bytes()[-maximum:])
+        content = path.read_bytes()
+        if name.startswith("direct-launch-"):
+            half = maximum // 2
+            path.write_bytes(
+                content[:half]
+                + b"\n[bounded middle omitted]\n"
+                + content[-half:]
+            )
+        else:
+            path.write_bytes(b"[truncated to bounded tail]\n" + content[-maximum:])
 PY
 }
 
@@ -74,7 +88,7 @@ collect_evidence() {
         --info \
         --debug \
         --predicate \
-        'subsystem CONTAINS[c] "TextInput" OR category CONTAINS[c] "TextInput" OR process == "Squirrel" OR process == "imklaunchagent" OR process == "TextInputMenuAgent" OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel" OR eventMessage CONTAINS[c] "LaunchInputMethod" OR eventMessage CONTAINS[c] "getIMKXPCEndpoint"' \
+        'subsystem CONTAINS[c] "TextInput" OR subsystem CONTAINS[c] "LaunchServices" OR subsystem CONTAINS[c] "RunningBoard" OR subsystem CONTAINS[c] "InputMethodKit" OR category CONTAINS[c] "TextInput" OR process == "Squirrel" OR process == "imklaunchagent" OR process == "lsd" OR process == "launchservicesd" OR process == "runningboardd" OR process == "amfid" OR process == "taskgated" OR process == "syspolicyd" OR process == "ReportCrash" OR process == "CrashReporterSupportHelper" OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel" OR eventMessage CONTAINS[c] "LaunchInputMethod" OR eventMessage CONTAINS[c] "IMKXPCEndpoint" OR eventMessage CONTAINS[c] "dyld"' \
         2>"$EVIDENCE/system-log.stderr" \
         | tail -n 2000 >"$EVIDENCE/system-log.jsonl"
     /usr/sbin/screencapture -x "$EVIDENCE/desktop-final.png" \
@@ -283,7 +297,7 @@ appium --version >"$EVIDENCE/appium-version.txt"
 appium driver list --installed >"$EVIDENCE/appium-drivers.txt"
 record_phase "install-appium" "completed"
 
-record_phase "register-approve-select-and-compose" "started"
+record_phase "register-approve-direct-launch-select-and-compose" "started"
 python3 - "$EVIDENCE/installation-state.json" <<'PY'
 import json
 import pathlib
@@ -295,4 +309,4 @@ path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 PY
 python3 "$ROOT/Tests/HostedThirdPartyIMControl/control.py" \
     run "$EVIDENCE" "$HELPER" "$CLIENT_APP" "$INSTALLED_APP"
-record_phase "register-approve-select-and-compose" "completed"
+record_phase "register-approve-direct-launch-select-and-compose" "completed"

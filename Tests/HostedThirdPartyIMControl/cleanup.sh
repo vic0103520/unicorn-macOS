@@ -8,6 +8,7 @@ HELPER="$BUILD_ROOT/bin/ThirdPartySourceHelper"
 STATE="$EVIDENCE/installation-state.json"
 SOURCE_RESULT="$EVIDENCE/source-cleanup.json"
 FILE_RESULT="$EVIDENCE/file-cleanup.json"
+PROCESS_RESULT="$EVIDENCE/process-cleanup.json"
 RESULT="$EVIDENCE/cleanup.json"
 mkdir -p "$EVIDENCE"
 source_status=0
@@ -47,8 +48,75 @@ PY
 )
 fi
 
-pkill -x -u "$(id -u)" Squirrel >"$EVIDENCE/pkill-squirrel.log" 2>&1 || true
-sleep 0.5
+python3 - "$STATE" "$PROCESS_RESULT" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import signal
+import subprocess
+import sys
+import time
+
+state_path = pathlib.Path(sys.argv[1])
+output = pathlib.Path(sys.argv[2])
+try:
+    state = json.loads(state_path.read_text())
+except (OSError, json.JSONDecodeError):
+    state = {}
+direct = state.get("directLaunch") or {}
+pid = direct.get("pid")
+expected = direct.get("executablePath")
+result = {
+    "timestamp": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+    "trackedPID": pid,
+    "expectedExecutablePath": expected,
+    "terminationAttempted": False,
+    "forceTerminationAttempted": False,
+    "identityMatched": False,
+}
+
+def command_for(target):
+    completed = subprocess.run(
+        ["ps", "-p", str(target), "-o", "command="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout.strip(), completed.stderr
+
+if isinstance(pid, int) and isinstance(expected, str):
+    code, command, error = command_for(pid)
+    result.update({"commandBefore": command, "psExitCodeBefore": code, "psStderrBefore": error})
+    if code != 0:
+        result["alreadyAbsent"] = True
+    elif command == expected or command.startswith(expected + " "):
+        result["identityMatched"] = True
+        result["terminationAttempted"] = True
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(20):
+            if command_for(pid)[0] != 0:
+                break
+            time.sleep(0.1)
+        if command_for(pid)[0] == 0:
+            result["forceTerminationAttempted"] = True
+            os.kill(pid, signal.SIGKILL)
+            time.sleep(0.2)
+    else:
+        result["refusedReason"] = "tracked PID command no longer matches the exact direct-launch executable"
+else:
+    result["alreadyAbsent"] = True
+    result["reason"] = "no direct-launch PID was recorded"
+
+code, command, error = command_for(pid) if isinstance(pid, int) else (1, "", "")
+result.update({"psExitCodeAfter": code, "commandAfter": command, "psStderrAfter": error})
+result["trackedProcessAbsent"] = code != 0
+result["terminatedOnlyExactTrackedProcess"] = (
+    result["trackedProcessAbsent"]
+    and not result.get("refusedReason")
+)
+output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+PY
 
 python3 - "$STATE" "$FILE_RESULT" <<'PY'
 import datetime as dt
@@ -116,7 +184,7 @@ if [[ -x "$HELPER" ]]; then
         >"$EVIDENCE/input-sources-after-cleanup-command.log" 2>&1 || true
 fi
 
-python3 - "$SOURCE_RESULT" "$FILE_RESULT" "$RESULT" "$source_status" <<'PY'
+python3 - "$SOURCE_RESULT" "$FILE_RESULT" "$PROCESS_RESULT" "$RESULT" "$source_status" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -131,26 +199,29 @@ def load(path):
 
 source = load(sys.argv[1])
 files = load(sys.argv[2])
+exact_process = load(sys.argv[3])
 process = subprocess.run(
     ["pgrep", "-x", "Squirrel"], capture_output=True, text=True, check=False
 )
 process_absent = process.returncode == 1
 success = (
-    int(sys.argv[4]) == 0
+    int(sys.argv[5]) == 0
     and bool(source.get("success"))
     and bool(files.get("success"))
+    and bool(exact_process.get("terminatedOnlyExactTrackedProcess"))
     and process_absent
 )
 value = {
     "timestamp": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
     "success": success,
-    "restoredUSAndDisabledThirdPartySources": source,
+    "restoredOriginalSourceAndDisabledThirdPartySources": source,
     "removedTemporaryThirdPartyState": files,
+    "exactDirectLaunchProcessCleanup": exact_process,
     "squirrelProcessAbsent": process_absent,
     "pgrepExitCode": process.returncode,
     "pgrepStdout": process.stdout,
 }
-path = pathlib.Path(sys.argv[3])
+path = pathlib.Path(sys.argv[4])
 path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 raise SystemExit(0 if success else 5)
 PY
