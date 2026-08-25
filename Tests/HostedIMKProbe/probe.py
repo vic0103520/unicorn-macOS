@@ -426,8 +426,9 @@ def element_snapshot(driver: WebDriver, session_id: str, element_id: str) -> dic
             "elementType",
             "value",
             "amHasKeyboardInputFocus",
-            "enabled",
-            "visible",
+            "focused",
+            "hittable",
+            "frame",
         )
     }
 
@@ -540,7 +541,7 @@ def focus_text_view(
 def lambda_assertion(diagnostics: dict[str, Any]) -> dict[str, Any]:
     scalars = diagnostics.get("textScalars")
     marked_range = diagnostics.get("markedRange") or {}
-    ended = diagnostics.get("hasMarkedText") is False and marked_range.get("location") == -1
+    ended = diagnostics.get("hasMarkedText") is False and marked_range.get("length") == 0
     return {
         "text": diagnostics.get("text"),
         "textScalars": scalars,
@@ -563,7 +564,12 @@ def literal_mac2_delivery(diagnostics: dict[str, Any]) -> bool:
 
 def native_source_snapshot(helper: pathlib.Path, path: pathlib.Path) -> dict[str, Any]:
     result = run_command([str(helper), "sources", str(path)], timeout=30)
-    return {"command": result, "data": load_json(path, {})}
+    full_data = load_json(path, {})
+    data = {
+        key: full_data.get(key)
+        for key in ("timestamp", "current", "sourceCount")
+    }
+    return {"command": result, "data": data, "fullEvidencePath": path.name}
 
 
 def source_is_selected(snapshot: dict[str, Any], bundle_id: str) -> bool:
@@ -596,13 +602,7 @@ def attempt_input_source_consent(
         allow_element = find_element(
             driver,
             session_id,
-            [
-                ("accessibility id", "Allow"),
-                (
-                    "predicate string",
-                    "name == 'Allow' OR label == 'Allow' OR value == 'Allow'",
-                ),
-            ],
+            [("accessibility id", "action-button-1")],
             timeout=15,
         )
         result["allowElement"] = element_snapshot(driver, session_id, allow_element)
@@ -874,7 +874,7 @@ def run_probe(
             if consent.get("error"):
                 classification = "input_source_consent_not_automatable_with_mac2"
             elif consent.get("allowClicked") and retry.get("selectionStatus") != 0:
-                classification = "input_source_selection_denied_after_allow_click"
+                classification = "input_source_secure_consent_prompt_ignored_mac2_click"
             else:
                 classification = "input_source_selection_blocked"
     except Exception as error:

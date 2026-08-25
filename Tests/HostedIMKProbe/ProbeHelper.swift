@@ -139,7 +139,12 @@ private func runInputSourceSnapshot(outputPath: String) throws {
         "sources": sources,
     ]
     try writeJSON(value, to: outputPath)
-    printJSON(value)
+    printJSON([
+        "timestamp": value["timestamp"] as Any,
+        "current": value["current"] as Any,
+        "sourceCount": sources.count,
+        "outputPath": outputPath,
+    ])
 }
 
 private func runInstallAndSelect(
