@@ -1,0 +1,48 @@
+name: Hosted ARM64 InputMethodKit Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fm/unicorn-github-hosted-e2e-f10
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicorn-hosted-arm64-inputmethodkit-gui
+  cancel-in-progress: false
+
+jobs:
+  hosted-imk-probe:
+    name: macOS 15 ARM64 hosted probe
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out trusted branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run bounded InputMethodKit probe
+        id: producer
+        run: Tests/HostedIMKProbe/run.sh
+
+      - name: Ensure input-source cleanup
+        id: cleanup
+        if: always()
+        run: Tests/HostedIMKProbe/cleanup.sh
+
+      - name: Finalize machine-readable evidence
+        if: always()
+        run: |
+          status="$(cat build/HostedIMKProbe/evidence/producer-exit-code.txt 2>/dev/null || printf '1')"
+          python3 Tests/HostedIMKProbe/probe.py finalize build/HostedIMKProbe/evidence "$status"
+
+      - name: Upload bounded probe evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-arm64-inputmethodkit-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/HostedIMKProbe/evidence
+          if-no-files-found: error
+          retention-days: 14
