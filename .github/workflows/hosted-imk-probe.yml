@@ -2,6 +2,15 @@ name: Hosted ARM64 InputMethodKit Probe
 
 on:
   workflow_dispatch:
+    inputs:
+      experiment:
+        description: Bounded hosted InputMethodKit experiment
+        required: true
+        default: disposable-unicorn
+        type: choice
+        options:
+          - disposable-unicorn
+          - third-party-squirrel-control
 
 permissions:
   contents: read
@@ -13,6 +22,7 @@ concurrency:
 jobs:
   hosted-imk-probe:
     name: macOS 15 ARM64 hosted probe
+    if: inputs.experiment == 'disposable-unicorn'
     runs-on: macos-15
     timeout-minutes: 20
 
@@ -41,5 +51,39 @@ jobs:
         with:
           name: hosted-arm64-inputmethodkit-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/HostedIMKProbe/evidence
+          if-no-files-found: error
+          retention-days: 14
+
+  third-party-input-method-control:
+    name: macOS 15 ARM64 Squirrel control
+    if: inputs.experiment == 'third-party-squirrel-control'
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out trusted branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run bounded third-party input-method control
+        id: producer
+        run: Tests/HostedThirdPartyIMControl/run.sh
+
+      - name: Restore U.S. and remove temporary Squirrel state
+        if: always()
+        run: Tests/HostedThirdPartyIMControl/cleanup.sh
+
+      - name: Finalize machine-readable evidence
+        if: always()
+        run: |
+          status="$(cat build/HostedThirdPartyIMControl/evidence/producer-exit-code.txt 2>/dev/null || printf '1')"
+          python3 Tests/HostedThirdPartyIMControl/control.py \
+            finalize build/HostedThirdPartyIMControl/evidence "$status"
+
+      - name: Upload bounded control evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-arm64-third-party-input-method-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/HostedThirdPartyIMControl/evidence
           if-no-files-found: error
           retention-days: 14
