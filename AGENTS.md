@@ -37,18 +37,18 @@ make install
 make coverage
 ```
 
-- `make test` runs the hostless `UnicornCoreTests` bundle on the host architecture with coverage enabled, then builds a Debug app for arm64 and x86_64 and verifies both slices with `lipo`. Only the host-architecture tests execute.
+- `make test` runs the release and transactional-installer shell regressions, runs the hostless `UnicornCoreTests` bundle on the host architecture with coverage enabled, then builds a Debug app for arm64 and x86_64 and verifies both slices with `lipo`. Only the host-architecture Swift tests execute.
 - Test diagnostics and coverage data are stored in `build/Test/Results/UnicornCoreTests.xcresult`. All test intermediates stay under the ignored `build/Test/` directory.
 - `make coverage` reruns the standard test path and prints a readable report from that `.xcresult` bundle.
 - `make build` performs a universal arm64 and x86_64 Release build by default and overrides Xcode signing with the ad-hoc identity `-`; override `ARCHS` to request different slices.
 - `make test-native`, `make test-summary`, `make build-universal`, and `make coverage-report` expose the reusable stages behind the standard targets.
-- `make install` builds, replaces the app in `~/Library/Input Methods/`, and registers it with Launch Services.
+- `make install` builds and packages the app, then uses the same validated transactional installer as a release before registering it with Launch Services.
 
 The hostless suite uses Swift Testing for engine transitions, trie-backed lookup, candidates, history, limits, and presentation calculations.
 
 Core tests exercise the public engine manager seam but do not launch `unicorn.app`, an `IMKServer`, or the candidate panel. InputMethodKit lifecycle, marked-text behavior, candidate UI, and event handling in real clients require installing and enabling the input source and validating it in actual client applications. Universal compilation and hostless tests do not replace that end-to-end validation or validate the minimum supported macOS version.
 
-Release targets (`release`, `test-release`, `re-release`, and `clean-test-releases`) mutate local and remote Git or GitHub state. Inspect their definitions in the Makefile and use them only with explicit release intent.
+Release targets (`release`, `test-release`, and `clean-test-releases`) mutate local and remote Git or GitHub state. Production tags are single-use, and no re-release target exists. Inspect their definitions in the Makefile and use them only with explicit release intent. The canonical version, artifact, verification, and recovery contract is in [`docs/specs/security_and_distribution.md`](docs/specs/security_and_distribution.md).
 
 Use standard `git` commands for local repository state such as branches, commits, and local tags. Use the GitHub CLI (`gh`) for GitHub-hosted state such as pull requests and releases. The Makefile derives `GITHUB_REPO` from the `origin` remote for release commands; test-tag cleanup in the release workflow uses `gh api` so it does not depend on a local Git checkout.
 
@@ -63,6 +63,8 @@ Use standard `git` commands for local repository state such as branches, commits
 - `unicorn/InputController.swift`: InputMethodKit integration.
 - `unicorn/keymap.json`: bundled symbol data.
 - `.github/workflows/`: pull-request CI and tagged-release automation.
+- `scripts/package-release.sh` and `scripts/verify-release.sh`: final-archive production and offline contract verification.
+- `tests/release-scripts-tests.sh` and `tests/installer-tests.sh`: release and isolated destructive-path regressions.
 
 ## Maintaining this file
 

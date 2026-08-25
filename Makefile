@@ -9,6 +9,9 @@ CONFIG ?= Release
 ARCHS ?= arm64 x86_64
 VERBOSE ?= 0
 NO_COLOR ?= 0
+MARKETING_VERSION ?=
+BUILD_NUMBER ?=
+DIST_DIR ?= dist
 
 XCODEBUILD ?= xcodebuild
 XCODEBUILD_FLAGS = $(if $(filter 1,$(VERBOSE)),,-quiet)
@@ -18,6 +21,9 @@ XCODE_SIGNING_ARGS = \
 	CODE_SIGN_IDENTITY="-" \
 	CODE_SIGNING_REQUIRED=YES \
 	CODE_SIGNING_ALLOWED=YES
+XCODE_VERSION_ARGS = \
+	$(if $(MARKETING_VERSION),MARKETING_VERSION="$(MARKETING_VERSION)") \
+	$(if $(BUILD_NUMBER),CURRENT_PROJECT_VERSION="$(BUILD_NUMBER)")
 
 PASS_LABEL = $(if $(filter 1,$(NO_COLOR)),[PASS],\033[1;32m[PASS]\033[0m)
 FAIL_LABEL = $(if $(filter 1,$(NO_COLOR)),[FAIL],\033[1;31m[FAIL]\033[0m)
@@ -39,49 +45,79 @@ INSTALL_DIR ?= $(HOME)/Library/Input Methods
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test test-native test-summary coverage coverage-report lint format
-.PHONY: release test-release clean-test-releases re-release _wipe_release
+.PHONY: test test-native test-summary test-scripts coverage coverage-report lint format
+.PHONY: release-artifacts verify-release-artifacts
+.PHONY: release test-release clean-test-releases _push_release_tag _wipe_test_release
 
 all: build
 
 # --- Release Management Helpers ---
 
-# Internal helper to wipe a release and tag (usage: make _wipe_release TAG=v0.1.2)
-_wipe_release:
-	@echo "Wiping release and tag: $(TAG)"
-	-gh release delete $(TAG) --yes --repo $(GITHUB_REPO) 2>/dev/null || true
-	-git push origin :refs/tags/$(TAG) 2>/dev/null || true
-	-git tag -d $(TAG) 2>/dev/null || true
+# Internal: Push one new, validated release tag. Existing tag names are never reused.
+_push_release_tag:
+	@if [ -z "$(TAG)" ]; then echo "Error: TAG is required"; exit 1; fi
+	@./scripts/release-version.sh "$(TAG)" >/dev/null
+	@if git show-ref --verify --quiet "refs/tags/$(TAG)"; then \
+		echo "Error: local tag already exists and will not be reused: $(TAG)"; exit 1; \
+	fi
+	@if git ls-remote --exit-code --tags origin "refs/tags/$(TAG)" >/dev/null 2>&1; then \
+		echo "Error: remote tag already exists and will not be reused: $(TAG)"; exit 1; \
+	else \
+		status=$$?; [ "$$status" -eq 2 ] || { echo "Error: unable to check remote tag $(TAG)"; exit "$$status"; }; \
+	fi
+	git tag "$(TAG)"
+	git push origin "refs/tags/$(TAG)"
+	@echo "Release workflow triggered for new tag: $(TAG)"
 
-# Public: Trigger a release (usage: make release TAG=v0.1.2)
-# Automatically cleans up test releases first to save resources
+# Public: Trigger a production release (usage: make release TAG=v0.1.3).
 release:
-	@if [ -z "$(TAG)" ]; then echo "Error: TAG is required. Usage: make release TAG=v0.1.2"; exit 1; fi
-	-$(MAKE) clean-test-releases
-	@echo "Triggering release with tag: $(TAG)"
-	git tag $(TAG)
-	git push origin $(TAG)
+	@case "$(TAG)" in v*) ;; *) echo "Error: production TAG must start with v"; exit 1 ;; esac
+	+@$(MAKE) --no-print-directory _push_release_tag TAG="$(TAG)"
 
-# Public: Test release with a unique timestamped tag
-TEST_TAG = test-$(shell date +%Y%m%d%H%M%S)
+# Public: Trigger an unpublished test draft for a marketing version.
+TEST_TAG = test-v$(VERSION)-$(shell date -u +%Y%m%d%H%M%S)
 test-release:
-	$(MAKE) release TAG=$(TEST_TAG)
-	@echo "Done. Monitor progress on GitHub Actions."
+	@if [ -z "$(VERSION)" ]; then echo "Error: VERSION is required. Usage: make test-release VERSION=0.1.3"; exit 1; fi
+	+@$(MAKE) --no-print-directory _push_release_tag TAG="$(TEST_TAG)"
 
-# Public: Clean up all local and remote test tags and releases
+# Internal: Remove only an unpublished test release and its test tag.
+_wipe_test_release:
+	@case "$(TAG)" in test-v*) ;; *) echo "Error: refusing to remove non-test tag: $(TAG)"; exit 1 ;; esac
+	@./scripts/release-version.sh "$(TAG)" >/dev/null
+	@error_file="$$(mktemp)" || exit 1; \
+	if is_draft="$$(gh api "/repos/$(GITHUB_REPO)/releases/tags/$(TAG)" --jq .draft 2>"$$error_file")"; then \
+		[ "$$is_draft" = true ] || { echo "Error: refusing to delete a published test release"; rm -f "$$error_file"; exit 1; }; \
+		gh release delete "$(TAG)" --yes --repo "$(GITHUB_REPO)" || { rm -f "$$error_file"; exit 1; }; \
+	elif ! grep -Fq '(HTTP 404)' "$$error_file"; then \
+		cat "$$error_file" >&2; rm -f "$$error_file"; exit 1; \
+	fi; \
+	rm -f "$$error_file"
+	@if git ls-remote --exit-code --tags origin "refs/tags/$(TAG)" >/dev/null 2>&1; then \
+		git push origin ":refs/tags/$(TAG)"; \
+	else \
+		status=$$?; [ "$$status" -eq 2 ] || { echo "Error: unable to check remote test tag $(TAG)"; exit "$$status"; }; \
+	fi
+	@if git show-ref --verify --quiet "refs/tags/$(TAG)"; then git tag -d "$(TAG)"; fi
+	@echo "Test release and tag are absent: $(TAG)"
+
+# Public: Clean local unpublished test releases. Remote cleanup occurs for those tags.
 clean-test-releases:
-	@echo "Cleaning up all test-* tags and releases..."
-	@for tag in $$(git tag -l "test-*"); do \
-		$(MAKE) _wipe_release TAG=$$tag; \
+	@for tag in $$(git tag -l 'test-v*'); do \
+		$(MAKE) --no-print-directory _wipe_test_release TAG="$$tag" || exit $$?; \
 	done
-	@echo "Cleanup complete."
+	@echo "Test release cleanup complete."
 
-# Public: Re-release a version (usage: make re-release TAG=v0.1.2)
-re-release:
-	@if [ -z "$(TAG)" ]; then echo "Error: TAG is required. Usage: make re-release TAG=v0.1.2"; exit 1; fi
-	$(MAKE) _wipe_release TAG=$(TAG)
-	$(MAKE) release TAG=$(TAG)
-	@echo "Re-release of $(TAG) triggered. Monitor progress on GitHub Actions."
+release-artifacts: build
+	@if [ -z "$(TAG)" ] || [ -z "$(BUILD_NUMBER)" ]; then \
+		echo "Error: TAG and BUILD_NUMBER are required"; exit 1; \
+	fi
+	./scripts/package-release.sh "$(TAG)" "$(BUILD_NUMBER)" "$(APP_BUNDLE)" "$(DIST_DIR)"
+
+verify-release-artifacts:
+	@if [ -z "$(TAG)" ] || [ -z "$(BUILD_NUMBER)" ]; then \
+		echo "Error: TAG and BUILD_NUMBER are required"; exit 1; \
+	fi
+	./scripts/verify-release.sh "$(TAG)" "$(BUILD_NUMBER)" "$(DIST_DIR)"
 
 # Build the project in Debug mode
 build-debug:
@@ -109,7 +145,8 @@ build-universal:
 		OBJROOT="$(OBJROOT)" \
 		ARCHS="$(ARCHS)" \
 		ONLY_ACTIVE_ARCH=NO \
-		$(XCODE_SIGNING_ARGS); then \
+		$(XCODE_SIGNING_ARGS) \
+		$(XCODE_VERSION_ARGS); then \
 		:; \
 	else \
 		status=$$?; \
@@ -124,26 +161,30 @@ build-universal:
 		exit "$$status"; \
 	fi
 
-# Install the Input Method to the user's Library
+# Install a source build through the same transactional installer as a release.
 install: build
-	pkill -f $(APP_NAME) || true
-	mkdir -p "$(INSTALL_DIR)"
-	rm -rf "$(INSTALL_DIR)/$(APP_NAME).app" || true
-	cp -R "$(APP_BUNDLE)" "$(INSTALL_DIR)/"
-	# Notify the system to look for new input methods (macOS specific)
-	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(INSTALL_DIR)/$(APP_NAME).app"
-	sleep 1
+	@work_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/unicorn-source-install.XXXXXX")" || exit 1; \
+	trap 'rm -rf "$$work_dir"' EXIT HUP INT TERM; \
+	version="$$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$(APP_BUNDLE)/Contents/Info.plist")"; \
+	build_number="$$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$(APP_BUNDLE)/Contents/Info.plist")"; \
+	./scripts/package-release.sh "test-v$$version-$$build_number" "$$build_number" "$(APP_BUNDLE)" "$$work_dir/assets"; \
+	/usr/bin/unzip -q "$$work_dir/assets/unicorn-macos.zip" -d "$$work_dir/distribution"; \
+	UNICORN_ASSUME_YES=1 UNICORN_INSTALL_DIR="$(INSTALL_DIR)" /bin/sh "$$work_dir/distribution/install.sh"
 
 # Clean build artifacts
 clean:
 	rm -rf "$(BUILD_DIR)"
 
-test: test-native
+test: test-scripts test-native
 	+@$(MAKE) --no-print-directory build-universal \
 		CONFIG=Debug \
 		ARCHS="$(ARCHS)" \
 		SYMROOT="$(TEST_APP_SYMROOT)" \
 		OBJROOT="$(TEST_APP_OBJROOT)"
+
+test-scripts:
+	@./tests/release-scripts-tests.sh
+	@./tests/installer-tests.sh
 
 test-native:
 	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."

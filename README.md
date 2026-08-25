@@ -41,22 +41,35 @@ The [technical specification](docs/SPECIFICATION.md#architecture) is the canonic
 
 The project currently has a macOS 15.5 deployment target. The published v0.1.2 archive contains an arm64 binary, so it does not run on Intel Macs.
 
-### Install the published archive
+### Install a published archive
 
-1. Download `unicorn-macos.zip` and `checksum.txt` from [GitHub Releases](https://github.com/vic0103520/unicorn-macOS/releases).
-2. Extract `unicorn-macos.zip`.
-3. From the extracted directory, verify that the SHA256 digest of `unicorn.app/Contents/MacOS/unicorn` matches the separately downloaded checksum.
-4. Run the installer from that directory in Terminal:
+For releases produced by the current workflow, verify the final ZIP before running its bundled installer. Replace `vX.Y.Z` with the release tag:
 
-   ```sh
-   sh install.sh
-   ```
+```sh
+TAG=vX.Y.Z
+REPO=vic0103520/unicorn-macOS
+mkdir "unicorn-$TAG" && cd "unicorn-$TAG"
+gh release download "$TAG" --repo "$REPO" \
+  --pattern unicorn-macos.zip \
+  --pattern SHA256SUMS \
+  --pattern UNICORN_EXECUTABLE_SHA256
+shasum -a 256 -c SHA256SUMS
+mkdir extracted
+unzip unicorn-macos.zip -d extracted
+cmp UNICORN_EXECUTABLE_SHA256 extracted/UNICORN_EXECUTABLE_SHA256
+(cd extracted && shasum -a 256 -c UNICORN_EXECUTABLE_SHA256)
+test "$(plutil -extract CFBundleShortVersionString raw -o - extracted/unicorn.app/Contents/Info.plist)" = "${TAG#v}"
+codesign --verify --deep --strict --verbose=2 extracted/unicorn.app
+sh extracted/install.sh
+```
 
-5. Read the security notice and confirm only if you accept the risks.
+Read the installer notice and continue only if you accept the risks. `SHA256SUMS` covers the exact downloaded ZIP. It detects corruption or inconsistency with the downloaded sidecar, but it does not authenticate the publisher because both files come from the same release and the app is only ad-hoc signed. The [Security and Distribution specification](docs/specs/security_and_distribution.md#consumer-verification) gives the complete identity, build-number, required-file, and signature-policy checks.
+
+The historical v0.1.2 release predates this format. Its `checksum.txt` covers only the executable inside its ZIP, not the final archive. See the [published artifact evidence](docs/specs/security_and_distribution.md#signing-and-published-artifact-evidence) before using that legacy release.
 
 ### Build and install from source
 
-The [Makefile](Makefile) builds the Xcode project and installs the app in the current user's input-method directory:
+The [Makefile](Makefile) builds the Xcode project and runs the same transactional installer against the current user's input-method directory:
 
 ```sh
 make install
@@ -79,9 +92,9 @@ Unicorn is an independent open-source project. The [Makefile](Makefile) build an
 3. **Tampering risk:** A warning that the app is damaged can indicate quarantine or that downloaded software may have been altered.
 4. **Data exfiltration risk:** Any untrusted input method could potentially transmit captured data.
 
-The source is available in this [GitHub repository](https://github.com/vic0103520/unicorn-macOS) for inspection. Unicorn's entitlements do not request network access, and the current source contains no network client behavior. The installer displays the main binary's SHA256 digest, but trust requires comparing it with a checksum obtained independently from the release assets.
+The source is available in this [GitHub repository](https://github.com/vic0103520/unicorn-macOS) for inspection. Unicorn's entitlements do not request network access, and the current source contains no network client behavior. The installer checks the bundle identity, version, required files, executable digest, and ad-hoc signature before changing the destination. These are consistency checks, not proof of publisher identity.
 
-The installer asks for confirmation before removing the app's quarantine attribute, copying it to `~/Library/Input Methods/`, and registering it with Launch Services. If macOS still blocks the app, use the authorization options shown by System Settings or Finder only after verifying and trusting the artifact.
+After confirmation, the installer stages the app in `~/Library/Input Methods/`, preserves a valid existing installation, replaces and registers the app, and checks the installed state. A replacement, registration, or restart failure does not print success and triggers rollback. A later run restores a preserved backup left by an uncatchable interruption before attempting another installation. If macOS still blocks the app, use the authorization options shown by System Settings or Finder only after verifying and trusting the artifact.
 
 Technical signing, installer, integrity, and release-verification behavior is canonical in [Security and Distribution](docs/specs/security_and_distribution.md).
 
