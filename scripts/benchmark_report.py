@@ -5,10 +5,31 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import platform
 import statistics
 import subprocess
+import sys
 from pathlib import Path
+
+
+ANSI_BOLD = "\033[1m"
+ANSI_CYAN = "\033[36m"
+ANSI_GREEN = "\033[32m"
+ANSI_YELLOW = "\033[33m"
+ANSI_RESET = "\033[0m"
+
+WORKLOAD_NAMES = {
+    "testInMemoryInitializationFromProductionKeymap": "In-memory initialization",
+    "testTraversalOfEveryCandidateBearingProductionPath": "Candidate-bearing path traversal",
+    "testCommonProductionComposition": "Common production composition",
+    "testDeterministicMixedComposition": "Deterministic mixed composition",
+    "testAccumulatingSoftCommitAndHistory": "Accumulating soft commit and history",
+    "testUndoAndHistoryPressureAtCap": "Undo and history pressure",
+    "testProductionCandidateNavigationAndSelection": (
+        "Production candidate navigation and selection"
+    ),
+}
 
 
 def command_output(*arguments: str) -> str:
@@ -69,33 +90,118 @@ def display_value(metric: dict) -> str:
     return f"{value} {unit}"
 
 
-def print_human_summary(report: dict, artifact_path: str) -> None:
+def color_enabled(stream, environment: dict[str, str]) -> bool:
+    return (
+        stream.isatty()
+        and "CI" not in environment
+        and "NO_COLOR" not in environment
+    )
+
+
+def styled(value: str, code: str, use_color: bool) -> str:
+    return f"{code}{value}{ANSI_RESET}" if use_color else value
+
+
+def terminal_artifact_path(artifact_path: str) -> str:
+    path = Path(artifact_path)
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return artifact_path
+
+
+def render_human_summary(
+    report: dict,
+    artifact_path: str,
+    use_color: bool,
+) -> str:
     test_summary = report["xcodeTestSummary"]
     context = report["context"]
-    keymap = context["productionKeymap"]
-    print(
-        f"Benchmark {test_summary['result']}: "
-        f"{test_summary['passedTests']}/{test_summary['totalTestCount']} tests "
-        f"(Release {context['hostArchitecture']})"
+    passed = test_summary["passedTests"]
+    total = test_summary["totalTestCount"]
+    status = "PASS" if test_summary["result"] == "Passed" and passed == total else "FAIL"
+
+    title = styled("UNICORN BENCHMARKS", ANSI_CYAN, use_color)
+    status_text = styled(status, ANSI_GREEN, use_color) if status == "PASS" else status
+    lines = [
+        f"{title}  {status_text}  {passed}/{total}",
+        (
+            f"{context['configuration']} · {context['hostArchitecture']} · "
+            f"{context['measurementIterations']} iterations"
+        ),
+        "",
+    ]
+
+    metric_identifiers = {
+        "wall": "com.apple.dt.XCTMetric_Clock.time.monotonic",
+        "cpu": "com.apple.dt.XCTMetric_CPU.time",
+        "memory": "com.apple.dt.XCTMetric_Memory.physical_peak",
+    }
+    rows = []
+    workload_order = {name: index for index, name in enumerate(WORKLOAD_NAMES)}
+    tests = sorted(
+        report["performanceTests"],
+        key=lambda test: workload_order.get(test["name"], len(workload_order)),
     )
-    print(
-        f"Fixture: {keymap['byteCount']} bytes, "
-        f"SHA-256 {keymap['sha256']}"
-    )
-    print("Measured batch averages:")
-    for test in report["performanceTests"]:
+    for test in tests:
         metrics = {metric["identifier"]: metric for metric in test["metrics"]}
-        fields = []
-        for identifier, label in [
-            ("com.apple.dt.XCTMetric_Clock.time.monotonic", "wall"),
-            ("com.apple.dt.XCTMetric_CPU.time", "CPU"),
-            ("com.apple.dt.XCTMetric_Memory.physical_peak", "peak memory"),
-        ]:
-            if identifier in metrics:
-                fields.append(f"{label} {display_value(metrics[identifier])}")
-        print(f"  {test['name']}: {' | '.join(fields)}")
-    print(f"Artifacts: {artifact_path}")
-    print("No numeric regression thresholds were applied.")
+        wall = metrics.get(metric_identifiers["wall"])
+        cpu = metrics.get(metric_identifiers["cpu"])
+        memory = metrics.get(metric_identifiers["memory"])
+        rows.append(
+            (
+                WORKLOAD_NAMES.get(test["name"], test["name"]),
+                display_value(wall) if wall else "-",
+                display_value(cpu) if cpu else "-",
+                display_value(memory) if memory else "-",
+                (
+                    f"{wall['relativeStandardDeviationPercent']:.2f}%"
+                    if wall
+                    else "-"
+                ),
+            )
+        )
+
+    headings = ("WORKLOAD", "WALL", "CPU", "PEAK MEMORY", "VARIATION")
+    widths = [
+        max(len(headings[index]), *(len(row[index]) for row in rows))
+        for index in range(len(headings))
+    ]
+
+    def plain_row(values: tuple[str, ...]) -> str:
+        return "   ".join(
+            [values[0].ljust(widths[0])]
+            + [values[index].rjust(widths[index]) for index in range(1, 5)]
+        )
+
+    lines.append(styled(plain_row(headings), ANSI_CYAN, use_color))
+    for row in rows:
+        workload = styled(row[0], ANSI_BOLD, use_color) + " " * (
+            widths[0] - len(row[0])
+        )
+        measurements = "   ".join(
+            row[index].rjust(widths[index]) for index in range(1, 5)
+        )
+        lines.append(f"{workload}   {measurements}")
+
+    lines.extend(
+        [
+            "",
+            f"Results: {styled(terminal_artifact_path(artifact_path), ANSI_CYAN, use_color)}",
+            f"Thresholds: {styled('not enforced', ANSI_YELLOW, use_color)}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def print_human_summary(report: dict, artifact_path: str) -> None:
+    print(
+        render_human_summary(
+            report,
+            artifact_path,
+            color_enabled(sys.stdout, dict(os.environ)),
+        )
+    )
 
 
 def main() -> None:

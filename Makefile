@@ -47,7 +47,7 @@ INSTALL_DIR ?= $(HOME)/Library/Input Methods
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test test-native test-summary benchmark benchmark-native benchmark-summary
+.PHONY: test test-native test-summary benchmark benchmark-native benchmark-summary benchmark-report-test
 .PHONY: coverage coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
@@ -247,12 +247,15 @@ benchmark-summary:
 		--metrics "$(BENCHMARK_XCODE_METRICS)" \
 		--output "$(BENCHMARK_SUMMARY)" \
 		--artifact-path "$(BENCHMARK_ROOT)"; then \
-		printf '%b%s\n' "$(RESULT_LABEL)" " Benchmark xcresult: path=$(BENCHMARK_RESULT_BUNDLE)"; \
+		:; \
 	else \
 		status=$$?; \
 		printf '%b%s\n' "$(FAIL_LABEL)" " Benchmark report: output=$(BENCHMARK_SUMMARY) exit=$$status"; \
 		exit "$$status"; \
 	fi
+
+benchmark-report-test:
+	@python3 scripts/test_benchmark_report.py
 
 coverage: test
 	+@$(MAKE) --no-print-directory coverage-report

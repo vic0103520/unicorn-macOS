@@ -46,7 +46,21 @@ All generated files stay under the ignored `build/Benchmark/` directory:
 - `Summary/benchmark-summary.json`: the two Xcode exports combined with benchmark context and computed sample averages;
 - `DerivedData/`, `BuildProducts/`, and `Intermediates/`: benchmark-only build products.
 
-The context records production keymap byte count and SHA-256, native architecture, macOS product and build versions, Xcode version and build, Swift version, Release configuration, measurement iterations, and synthetic-fixture dimensions. The concise terminal report shows batch-average wall-clock and CPU time, plus peak memory for selected workloads. The JSON retains every raw sample and additional CPU counters that XCTest reports on the current host.
+The context records production keymap byte count and SHA-256, native architecture, macOS product and build versions, Xcode version and build, Swift version, Release configuration, measurement iterations, and synthetic-fixture dimensions. The concise terminal report shows batch-average wall-clock and CPU time, peak memory for selected workloads, and wall-clock relative standard deviation as variation:
+
+```text
+UNICORN BENCHMARKS  PASS  7/7
+Release · arm64 · 5 iterations
+
+WORKLOAD                                      WALL        CPU   PEAK MEMORY   VARIATION
+In-memory initialization                 1.234 ms   1.000 ms      1.00 MiB       1.00%
+...
+
+Results: build/Benchmark
+Thresholds: not enforced
+```
+
+Column widths adapt to the measured values. In an interactive terminal, the passing result is green, headings and the artifact path are cyan, the no-threshold notice is yellow, and workload names are bold. Output remains plain and aligned when redirected, when `CI` is set, or when `NO_COLOR` is present in the environment. The JSON retains every raw sample and additional CPU counters that XCTest reports on the current host. Run `make benchmark-report-test` for the focused plain and colored formatter tests.
 
 ## Interpreting and comparing runs
 
