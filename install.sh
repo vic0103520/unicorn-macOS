@@ -31,7 +31,8 @@ EXPECTED_VERSION=
 EXPECTED_BUILD=
 EXPECTED_EXECUTABLE_SUM=
 OLD_PROCESS_PIDS=
-TERMINATION_ATTEMPTS=${UNICORN_TEST_TERMINATION_ATTEMPTS:-100}
+PRODUCTION_TERMINATION_ATTEMPTS=100
+TERMINATION_ATTEMPTS=$PRODUCTION_TERMINATION_ATTEMPTS
 TERMINATION_POLL_SECONDS=0.05
 
 error() {
@@ -333,9 +334,12 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-case "$TERMINATION_ATTEMPTS" in
-    ''|0|*[!0-9]*) fail "invalid process termination grace-period attempt count" ;;
-esac
+if [ "${UNICORN_TEST_TERMINATION_ATTEMPTS+set}" = set ]; then
+    case "$UNICORN_TEST_TERMINATION_ATTEMPTS" in
+        [1-9]|[1-9][0-9]) TERMINATION_ATTEMPTS=$UNICORN_TEST_TERMINATION_ATTEMPTS ;;
+        *) fail "test process termination attempt count must be between 1 and 99" ;;
+    esac
+fi
 
 printf '%s\n' '--------------------------------------------------'
 printf '%s\n' 'Unicorn: macOS Installer'

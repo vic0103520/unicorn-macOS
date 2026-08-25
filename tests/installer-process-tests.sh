@@ -6,9 +6,7 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "$SCRIPT_DIR/shell-test-lib.sh"
 
 WORK_DIR=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/unicorn installer process tests.XXXXXX")
-FIXTURE_REGISTRY="$WORK_DIR/fixture-pids"
 CHILD_REGISTRY="$WORK_DIR/child-pids"
-: > "$FIXTURE_REGISTRY"
 : > "$CHILD_REGISTRY"
 INSTALLER_PID=
 WATCHDOG_PID=
@@ -23,36 +21,47 @@ pid_executes_path() {
     printf '%s\n' "$exact_output" | /usr/bin/grep -Eq "^${exact_pid}$"
 }
 
-register_fixture() {
-    fixture_pid=$1
-    fixture_path=$2
-    printf '%s|%s\n' "$fixture_pid" "$fixture_path" >> "$FIXTURE_REGISTRY"
-}
-
 register_child() {
     printf '%s\n' "$1" >> "$CHILD_REGISTRY"
 }
 
-kill_registered_fixtures() {
-    while IFS='|' read -r fixture_pid fixture_path; do
-        case "$fixture_pid" in ''|*[!0-9]*) continue ;; esac
-        # Fixture children remain unreaped until cleanup, so these recorded PIDs
-        # cannot be reused even if their executable mapping has been renamed or removed.
-        /bin/kill -KILL "$fixture_pid" 2>/dev/null || true
-    done < "$FIXTURE_REGISTRY"
+unregister_child() {
+    unregister_pid=$1
+    unregister_registry="$CHILD_REGISTRY.next"
+    /usr/bin/awk -v stopped="$unregister_pid" '$1 != stopped' "$CHILD_REGISTRY" > "$unregister_registry"
+    /bin/mv "$unregister_registry" "$CHILD_REGISTRY"
+}
+
+reap_child_bounded() {
+    reap_pid=$1
+    reap_attempt=0
+    while [ "$reap_attempt" -lt 100 ]; do
+        reap_state=$(/bin/ps -p "$reap_pid" -o stat= 2>/dev/null | /usr/bin/awk 'NR == 1 { print $1 }' || true)
+        case "$reap_state" in
+            ''|Z*) wait "$reap_pid" 2>/dev/null || true; return 0 ;;
+        esac
+        /bin/sleep 0.05
+        reap_attempt=$((reap_attempt + 1))
+    done
+    return 1
 }
 
 cleanup() {
     status=$?
     trap - EXIT HUP INT TERM
-    [ -z "$INSTALLER_PID" ] || /bin/kill -TERM "$INSTALLER_PID" 2>/dev/null || true
-    [ -z "$WATCHDOG_PID" ] || /bin/kill -TERM "$WATCHDOG_PID" 2>/dev/null || true
-    kill_registered_fixtures
+    cleanup_status=0
     while IFS= read -r child_pid; do
         case "$child_pid" in ''|*[!0-9]*) continue ;; esac
-        wait "$child_pid" 2>/dev/null || true
+        /bin/kill -KILL "$child_pid" 2>/dev/null || true
+    done < "$CHILD_REGISTRY"
+    while IFS= read -r child_pid; do
+        case "$child_pid" in ''|*[!0-9]*) continue ;; esac
+        reap_child_bounded "$child_pid" || cleanup_status=1
     done < "$CHILD_REGISTRY"
     /bin/rm -rf "$WORK_DIR"
+    if [ "$status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
+        status=$cleanup_status
+    fi
     exit "$status"
 }
 trap cleanup EXIT
@@ -187,7 +196,6 @@ launch_old_fixture() {
         fail_test "pre-existing process executes fixture: $fixture_executable"
     "$fixture_executable" "$fixture_mode" "$fixture_ready" &
     OLD_PID=$!
-    register_fixture "$OLD_PID" "$fixture_executable"
     register_child "$OLD_PID"
     wait_for_file "$fixture_ready"
     pid_executes_path "$OLD_PID" "$fixture_executable" || fail_test 'old fixture executable identity was not observed'
@@ -215,9 +223,11 @@ run_installer_with_watchdog() {
     else
         installer_status=$?
     fi
+    unregister_child "$INSTALLER_PID"
     INSTALLER_PID=
     /bin/kill -TERM "$WATCHDOG_PID" 2>/dev/null || true
     wait "$WATCHDOG_PID" 2>/dev/null || true
+    unregister_child "$WATCHDOG_PID"
     WATCHDOG_PID=
     [ ! -e "$watchdog_marker" ] || fail_test 'installer exceeded the outer watchdog deadline'
     return "$installer_status"
@@ -244,15 +254,21 @@ assert_case_clean() {
 
 stop_fixture() {
     stop_pid=$1
-    stop_path=$2
-    if pid_executes_path "$stop_pid" "$stop_path"; then
-        /bin/kill -KILL "$stop_pid"
-    fi
-    stop_registry="$FIXTURE_REGISTRY.next"
-    /usr/bin/awk -F '|' -v stopped="$stop_pid" '$1 != stopped' "$FIXTURE_REGISTRY" > "$stop_registry"
-    /bin/mv "$stop_registry" "$FIXTURE_REGISTRY"
-    wait "$stop_pid" 2>/dev/null || true
+    /bin/kill -KILL "$stop_pid" 2>/dev/null || true
+    reap_child_bounded "$stop_pid" || fail_test "timed out reaping fixture child: $stop_pid"
+    unregister_child "$stop_pid"
 }
+
+new_process_case 'invalid timeout override'
+INVALID_OVERRIDE_OUTPUT="$PROCESS_CASE_ROOT/installer-output"
+INVALID_OVERRIDE_WATCHDOG="$PROCESS_CASE_ROOT/watchdog-fired"
+if run_installer_with_watchdog "$INVALID_OVERRIDE_OUTPUT" "$INVALID_OVERRIDE_WATCHDOG" UNICORN_TEST_TERMINATION_ATTEMPTS=100; then
+    fail_test 'production-length test termination override unexpectedly succeeded'
+fi
+assert_contains "$INVALID_OVERRIDE_OUTPUT" 'test process termination attempt count must be between 1 and 99'
+assert_installed_version "$PROCESS_DESTINATION" 1.0.0
+assert_case_clean
+pass 'test termination override must be shorter than production'
 
 new_process_case 'ignored term rollback'
 IGNORED_READY="$PROCESS_CASE_ROOT/old-ready"
@@ -270,7 +286,7 @@ assert_registered_path "$PROCESS_DESTINATION/unicorn.app"
 pid_executes_path "$OLD_PID" "$PROCESS_DESTINATION/unicorn.app/Contents/MacOS/unicorn" || \
     fail_test 'rollback did not preserve the original ignored-TERM identity'
 assert_case_clean
-stop_fixture "$OLD_PID" "$PROCESS_DESTINATION/unicorn.app/Contents/MacOS/unicorn"
+stop_fixture "$OLD_PID"
 pass 'ignored SIGTERM fails the upgrade, restores the old app, and suppresses success'
 
 new_process_case 'delayed graceful exit'
@@ -287,6 +303,7 @@ if pid_executes_path "$OLD_PID" "$PROCESS_DESTINATION/unicorn.app/Contents/MacOS
     fail_test 'delayed old identity still executes a fixture executable'
 fi
 assert_case_clean
+stop_fixture "$OLD_PID"
 pass 'delayed graceful termination exits within the bound and allows upgrade'
 
 new_process_case 'replacement identity'
@@ -306,7 +323,6 @@ launch_old_fixture delayed "$RELAUNCH_READY"
     exec "$PROCESS_DESTINATION/unicorn.app/Contents/MacOS/unicorn" replacement "$REPLACEMENT_READY"
 ) &
 REPLACEMENT_PID=$!
-register_fixture "$REPLACEMENT_PID" "$PROCESS_DESTINATION/unicorn.app/Contents/MacOS/unicorn"
 register_child "$REPLACEMENT_PID"
 run_installer_with_watchdog "$RELAUNCH_OUTPUT" "$RELAUNCH_WATCHDOG" UNICORN_TEST_TERMINATION_ATTEMPTS=30
 wait_for_file "$REPLACEMENT_READY"
@@ -315,7 +331,7 @@ pid_executes_path "$REPLACEMENT_PID" "$PROCESS_DESTINATION/unicorn.app/Contents/
 assert_contains "$RELAUNCH_OUTPUT" 'Success: Unicorn 2.0.0 (build 200) was installed and registered'
 assert_installed_version "$PROCESS_DESTINATION" 2.0.0
 assert_case_clean
-stop_fixture "$REPLACEMENT_PID" "$PROCESS_DESTINATION/unicorn.app/Contents/MacOS/unicorn"
+stop_fixture "$REPLACEMENT_PID"
 pass 'replacement launched after old exit is not mistaken for an old survivor'
 
 printf '[RESULT] Installer process tests: passed=%s\n' "$TEST_PASS_COUNT"
