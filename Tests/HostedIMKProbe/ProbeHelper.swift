@@ -247,7 +247,6 @@ private func runSelect(
         return 2
     }
 
-    let enableStatus = TISEnableInputSource(probeSource)
     let selectionStatus = TISSelectInputSource(probeSource)
     let expectedSelectedID = stringProperty(probeSource, inputSourceIDKey)
     var selected = currentKeyboardInputSource()
@@ -259,12 +258,12 @@ private func runSelect(
     }
     let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
     let verified = expectedSelectedID != nil && selectedID == expectedSelectedID
-    let success = enableStatus == noErr && selectionStatus == noErr && verified
+    let success = selectionStatus == noErr && verified
     let result: [String: Any] = [
         "timestamp": isoTimestamp(),
         "success": success,
         "probeSource": sourceSummary(probeSource),
-        "enableStatus": enableStatus,
+        "enableAttempted": false,
         "selectionStatus": selectionStatus,
         "selectedSource": sourceSummary(selected),
         "selectionVerified": verified,
