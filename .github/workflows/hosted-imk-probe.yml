@@ -55,16 +55,16 @@ jobs:
           retention-days: 14
 
   third-party-input-method-control:
-    name: macOS 15 ARM64 Squirrel control
+    name: macOS 15 ARM64 Dvorak/Squirrel selectability diagnosis
     if: inputs.experiment == 'third-party-squirrel-control'
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out trusted branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Run bounded third-party input-method control
+      - name: Run bounded Dvorak/Squirrel selectability diagnosis
         id: producer
         run: Tests/HostedThirdPartyIMControl/run.sh
 
@@ -79,11 +79,11 @@ jobs:
           python3 Tests/HostedThirdPartyIMControl/control.py \
             finalize build/HostedThirdPartyIMControl/evidence "$status"
 
-      - name: Upload bounded control evidence
+      - name: Upload bounded diagnosis evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: hosted-arm64-third-party-input-method-control-${{ github.run_id }}-${{ github.run_attempt }}
+          name: hosted-arm64-dvorak-squirrel-selectability-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/HostedThirdPartyIMControl/evidence
           if-no-files-found: error
           retention-days: 14

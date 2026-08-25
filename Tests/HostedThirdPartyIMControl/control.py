@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Bounded hosted ARM64 control using the official Rime Squirrel release."""
+"""Bounded Dvorak/Squirrel selectability diagnosis on hosted ARM64 macOS."""
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import hashlib
 import importlib.util
 import json
 import os
@@ -21,9 +23,15 @@ if SHARED_SPEC is None or SHARED_SPEC.loader is None:
 shared = importlib.util.module_from_spec(SHARED_SPEC)
 SHARED_SPEC.loader.exec_module(shared)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BUNDLE_ID = "im.rime.inputmethod.Squirrel"
+PARENT_ID = "im.rime.inputmethod.Squirrel"
 MODE_ID = "im.rime.inputmethod.Squirrel.Hans"
+DVORAK_ID = "com.apple.keylayout.Dvorak"
+US_ID = "com.apple.keylayout.US"
+PARENT_TYPE = "TISTypeKeyboardInputMethodModeEnabled"
+MODE_TYPE = "TISTypeKeyboardInputMode"
+LAYOUT_TYPE = "TISTypeKeyboardLayout"
 EXECUTABLE_NAME = "Squirrel"
 EXPECTED_TEXT = "你好"
 EXPECTED_SCALARS = ["U+4F60", "U+597D"]
@@ -34,8 +42,7 @@ ASSET_SHA256 = "614746013212937623d5bbab9901e9c43d1ec937aa32307d6b6092a05e308287
 ASSET_URL = "https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg"
 RELEASE_URL = "https://github.com/rime/squirrel/releases/tag/1.1.2"
 SOURCE_URL = "https://github.com/rime/squirrel"
-BUILTIN_RUN_URL = "https://github.com/vic0103520/unicorn-macOS/actions/runs/32820366744"
-UNICORN_RUN_URL = "https://github.com/vic0103520/unicorn-macOS/actions/runs/32818022996"
+ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"
 
 
 def load_json(path: pathlib.Path, default: Any = None) -> Any:
@@ -63,99 +70,106 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
         pathlib.Path.home() / "Library" / "Caches" / BUNDLE_ID,
         pathlib.Path.home() / "Library" / "Application Support" / "Squirrel",
     ]
-    installation_state = {
-        "schemaVersion": SCHEMA_VERSION,
-        "createdAt": shared.timestamp(),
-        "selectionStarted": False,
-        "trackedPaths": [
-            {"path": str(path), "existedBefore": path.exists()}
-            for path in tracked_paths
-        ],
-    }
-    write_json(evidence / "installation-state.json", installation_state)
+    write_json(
+        evidence / "installation-state.json",
+        {
+            "schemaVersion": SCHEMA_VERSION,
+            "createdAt": shared.timestamp(),
+            "selectionStarted": False,
+            "dvorakInitiallyEnabled": False,
+            "trackedPaths": [
+                {"path": str(path), "existedBefore": path.exists()}
+                for path in tracked_paths
+            ],
+        },
+    )
+    write_json(
+        evidence / "summary.json",
+        {
+            "schemaVersion": SCHEMA_VERSION,
+            "probe": "github-hosted-arm64-dvorak-squirrel-selectability-diagnosis",
+            "status": "running",
+            "startedAt": shared.timestamp(),
+            "actionsRunURL": github_run_url(),
+            "boundedScope": {
+                "runnerLabel": "macos-15",
+                "expectedArchitecture": "arm64",
+                "sourcesUnderDiagnosis": [DVORAK_ID, BUNDLE_ID],
+                "thirdPartyProductCount": 1,
+                "thirdPartyProduct": "official Rime Squirrel 1.1.2",
+                "screenshotsDiagnosticOnly": True,
+                "passFailUsesOCRPixelsOrCoordinates": False,
+                "productBehaviorChanged": False,
+                "privatePreferenceOrAuthorizationDatabaseEdited": False,
+            },
+            "authoritativeContract": {
+                "api": "TISSelectInputSource",
+                "paramErr": -50,
+                "paramErrMeaning": "the source is not selectable",
+                "targetPrerequisites": [
+                    "kTISPropertyInputSourceIsSelectCapable == true",
+                    "kTISPropertyInputSourceIsEnabled == true",
+                ],
+                "inputModeAdditionalPrerequisite": "an enabled parent input method",
+                "interpretation": "These are evaluated as causal prerequisites, not as a generic error code.",
+            },
+            "intendedSources": {
+                "dvorak": {"sourceID": DVORAK_ID, "type": LAYOUT_TYPE},
+                "squirrelParent": {"sourceID": PARENT_ID, "type": PARENT_TYPE},
+                "squirrelMode": {"sourceID": MODE_ID, "type": MODE_TYPE},
+            },
+            "smallestCounterfactual": {
+                "transition": f"Enable exact parent {PARENT_ID} before exact mode {MODE_ID}, refresh both live TISInputSourceRefs, then select only {MODE_ID}.",
+                "whySmallest": "The prior hosted Squirrel run enabled the Hans mode while its documented input-method parent remained disabled.",
+                "disconfirmingEvidenceRetained": [
+                    "Dvorak transitions in the same Aqua session",
+                    "all Dvorak and Squirrel property snapshots",
+                    "before/after snapshots for every selection attempt",
+                    "bounded Text Input Services log windows",
+                    "current-source, process, and physical-key/composition evidence",
+                ],
+            },
+            "assertions": {
+                "dvorakPhysicalKey": {
+                    "keyCode": 37,
+                    "usPhysicalKey": "l",
+                    "expectedDvorakText": "n",
+                },
+                "squirrelComposition": {
+                    "physicalKeys": ["n", "i", "h", "a", "o", "space"],
+                    "expectedCommittedText": EXPECTED_TEXT,
+                    "expectedTextScalars": EXPECTED_SCALARS,
+                    "compositionMustEnd": True,
+                },
+            },
+            "github": {
+                key: os.environ.get(key)
+                for key in (
+                    "GITHUB_ACTIONS",
+                    "GITHUB_REPOSITORY",
+                    "GITHUB_RUN_ID",
+                    "GITHUB_RUN_ATTEMPT",
+                    "GITHUB_SHA",
+                    "GITHUB_REF",
+                    "RUNNER_NAME",
+                    "RUNNER_ARCH",
+                    "RUNNER_OS",
+                    "ImageOS",
+                    "ImageVersion",
+                )
+            },
+        },
+    )
 
-    summary = {
-        "schemaVersion": SCHEMA_VERSION,
-        "probe": "github-hosted-arm64-macos-third-party-inputmethod-control",
-        "status": "running",
-        "startedAt": shared.timestamp(),
-        "actionsRunURL": github_run_url(),
-        "boundedScope": {
-            "thirdPartyProductCount": 1,
-            "product": "Rime Squirrel",
-            "release": RELEASE_TAG,
-            "runnerLabel": "macos-15",
-            "expectedArchitecture": "arm64",
-            "screenshotsAndVideoAreDiagnosticOnly": True,
-            "passFailUsesScreenshotPixels": False,
-        },
-        "productSelection": {
-            "name": "Rime Squirrel",
-            "sourceRepository": SOURCE_URL,
-            "officialRelease": RELEASE_URL,
-            "releaseCommit": RELEASE_COMMIT,
-            "stableRelease": True,
-            "openSource": True,
-            "inputMethodKitFrontend": True,
-            "appleSiliconEvidenceRequired": "arm64 slice in the signed release app",
-        },
-        "assertion": {
-            "inputModeID": MODE_ID,
-            "physicalKeys": ["n", "i", "h", "a", "o", "space"],
-            "expectedCommittedText": EXPECTED_TEXT,
-            "expectedTextScalars": EXPECTED_SCALARS,
-            "compositionMustEnd": True,
-            "reason": "The clean official release defaults to Luna Pinyin; nihao plus Space should commit its first candidate.",
-        },
-        "fixedPriorEvidence": {
-            "builtIn": {
-                "runURL": BUILTIN_RUN_URL,
-                "target": "com.apple.keylayout.Dvorak",
-                "enableStatus": 0,
-                "selectionStatus": 0,
-                "selected": True,
-                "physicalKeyCode37CommittedText": "n",
-            },
-            "disposableUnicorn": {
-                "runURL": UNICORN_RUN_URL,
-                "registrationStatus": 0,
-                "discovered": True,
-                "enableStatus": 0,
-                "systemSettingsAllowClicked": True,
-                "selectionStatus": -50,
-                "selected": False,
-                "imkProcessObserved": False,
-                "hardwareStyleTextScalars": ["U+005C", "U+006C", "U+000A"],
-            },
-        },
-        "causalTerms": {
-            "initiatingTrigger": "TISEnableInputSource after TISRegisterInputSource starts the System Settings third-party input-source consent path; the live helper then retries TISSelectInputSource.",
-            "maskingCondition": "Registration, discovery, an Allow click, or Appium text injection can look successful without selecting or traversing InputMethodKit. Selection identifiers, live process evidence, CGEvent delivery, and client diagnostics are evaluated independently.",
-            "visibleSymptom": "pending experiment",
-        },
-        "smallestCounterfactual": {
-            "changedVariable": "Replace only the disposable ad hoc Unicorn input-method target with one official Developer ID signed and notarized known-working Squirrel release while retaining macos-15, the Aqua user, public TIS APIs, System Settings Accessibility automation, the test client, and hardware-style CGEvents.",
-            "leadingExplanationBeforeRun": "A general GitHub-hosted restriction may prevent any third-party input method from passing approval and selection.",
-            "disconfirmingEvidenceSought": "A zero TISSelectInputSource result with Squirrel selected, followed by Squirrel process launch and deterministic composition, would disprove a general third-party hosted-runner prohibition.",
-        },
-        "github": {
-            key: os.environ.get(key)
-            for key in (
-                "GITHUB_ACTIONS",
-                "GITHUB_REPOSITORY",
-                "GITHUB_RUN_ID",
-                "GITHUB_RUN_ATTEMPT",
-                "GITHUB_SHA",
-                "GITHUB_REF",
-                "RUNNER_NAME",
-                "RUNNER_ARCH",
-                "RUNNER_OS",
-                "ImageOS",
-                "ImageVersion",
-            )
-        },
-    }
-    write_json(evidence / "summary.json", summary)
+
+def source_snapshot(
+    helper: pathlib.Path, evidence: pathlib.Path, filename: str, label: str
+) -> dict[str, Any]:
+    path = evidence / filename
+    command = shared.run_command(
+        [str(helper), "sources", label, str(path)], timeout=30
+    )
+    return {"command": command, "data": load_json(path, {})}
 
 
 def preflight(evidence: pathlib.Path, helper: pathlib.Path) -> None:
@@ -172,7 +186,9 @@ def preflight(evidence: pathlib.Path, helper: pathlib.Path) -> None:
         "developerSecurity": ["DevToolsSecurity", "-status"],
         "automationModeBefore": ["automationmodetool"],
     }
-    results = {name: shared.run_command(command) for name, command in commands.items()}
+    results = {
+        name: shared.run_command(command) for name, command in commands.items()
+    }
     results["automationModeEnable"] = shared.run_command(
         [
             "sudo",
@@ -186,9 +202,11 @@ def preflight(evidence: pathlib.Path, helper: pathlib.Path) -> None:
     results["nativeSession"] = shared.run_command(
         [str(helper), "session", str(evidence / "aqua-session.json")]
     )
-    results["initialSources"] = shared.run_command(
-        [str(helper), "sources", str(evidence / "input-sources-initial.json")],
-        timeout=30,
+    results["initialSources"] = source_snapshot(
+        helper,
+        evidence,
+        "input-sources-initial.json",
+        "initial-clean-hosted-state",
     )
     write_json(evidence / "environment.json", results)
 
@@ -199,14 +217,14 @@ def preflight(evidence: pathlib.Path, helper: pathlib.Path) -> None:
         "aquaSession": load_json(evidence / "aqua-session.json", {}),
         "windowServerExitCode": results["windowServer"].get("exitCode"),
         "aquaLaunchDomainExitCode": results["aquaLaunchDomain"].get("exitCode"),
-        "automationModeEnableExitCode": results["automationModeEnable"].get("exitCode"),
+        "automationModeEnableExitCode": results["automationModeEnable"].get(
+            "exitCode"
+        ),
     }
     write_json(evidence / "summary.json", summary)
 
 
 def sha256(path: pathlib.Path) -> str:
-    import hashlib
-
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -228,7 +246,14 @@ def provenance(evidence: pathlib.Path, package: pathlib.Path, app: pathlib.Path)
             str(app),
         ],
         "appSignature": ["codesign", "-d", "--verbose=4", str(app)],
-        "appGatekeeper": ["spctl", "--assess", "--type", "execute", "--verbose=4", str(app)],
+        "appGatekeeper": [
+            "spctl",
+            "--assess",
+            "--type",
+            "execute",
+            "--verbose=4",
+            str(app),
+        ],
         "appStapler": ["xcrun", "stapler", "validate", str(app)],
         "executableFile": ["file", str(executable)],
         "executableArchitectures": ["lipo", "-archs", str(executable)],
@@ -264,10 +289,20 @@ def provenance(evidence: pathlib.Path, package: pathlib.Path, app: pathlib.Path)
         "appCodeSignatureValid": results["appVerify"].get("exitCode") == 0,
         "appGatekeeperAccepted": results["appGatekeeper"].get("exitCode") == 0,
         "appHasArm64Slice": "arm64" in architecture_output.split(),
-        "packageDeveloperIDInstaller": "Developer ID Installer: Yuncao Liu (28HU5A7B46)" in package_signature_output,
-        "packageNotarizationTrusted": "trusted by the Apple notary service" in package_signature_output,
-        "appDeveloperIDApplication": "Developer ID Application: Yuncao Liu (28HU5A7B46)" in app_signature_output,
-        "appTeamIdentifierMatches": "TeamIdentifier=28HU5A7B46" in app_signature_output,
+        "packageDeveloperIDInstaller": (
+            "Developer ID Installer: Yuncao Liu (28HU5A7B46)"
+            in package_signature_output
+        ),
+        "packageNotarizationTrusted": (
+            "trusted by the Apple notary service" in package_signature_output
+        ),
+        "appDeveloperIDApplication": (
+            "Developer ID Application: Yuncao Liu (28HU5A7B46)"
+            in app_signature_output
+        ),
+        "appTeamIdentifierMatches": (
+            "TeamIdentifier=28HU5A7B46" in app_signature_output
+        ),
         "appNotarizedDeveloperID": "Notarized Developer ID" in gatekeeper_output,
     }
     required = all(verified.values())
@@ -330,42 +365,141 @@ def provenance(evidence: pathlib.Path, package: pathlib.Path, app: pathlib.Path)
     return 0 if required else 2
 
 
-def source_snapshot(
-    helper: pathlib.Path, evidence: pathlib.Path, filename: str
+def parse_timestamp(value: str | None) -> dt.datetime:
+    if not value:
+        return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def capture_tis_log_window(
+    evidence: pathlib.Path,
+    name: str,
+    started_at: str | None,
+    completed_at: str | None,
 ) -> dict[str, Any]:
-    path = evidence / filename
-    command = shared.run_command([str(helper), "sources", str(path)], timeout=30)
-    data = load_json(path, {})
-    return {
-        "command": command,
-        "data": data,
-        "target": next(
-            (
-                source
-                for source in data.get("sources", [])
-                if source.get("bundleID") == BUNDLE_ID
-                and (
-                    source.get("inputModeID") == MODE_ID
-                    or source.get("inputSourceID") == MODE_ID
-                )
-            ),
-            {"present": False},
-        ),
-    }
-
-
-def selected(snapshot: dict[str, Any]) -> bool:
-    current = snapshot.get("data", {}).get("current", {})
-    return current.get("bundleID") == BUNDLE_ID and (
-        current.get("inputModeID") == MODE_ID
-        or current.get("inputSourceID") == MODE_ID
-        or str(current.get("inputSourceID", "")).endswith(".Hans")
+    start = parse_timestamp(started_at) - dt.timedelta(seconds=2)
+    end = max(parse_timestamp(completed_at), dt.datetime.now(dt.timezone.utc))
+    time.sleep(0.5)
+    end += dt.timedelta(seconds=1)
+    predicate = (
+        '(subsystem CONTAINS[c] "TextInput" '
+        'OR category CONTAINS[c] "TextInput" '
+        'OR process == "TextInputMenuAgent" '
+        'OR process == "imklaunchagent" '
+        'OR process == "SystemUIServer" '
+        'OR eventMessage CONTAINS[c] "TIS" '
+        'OR eventMessage CONTAINS[c] "Squirrel" '
+        'OR eventMessage CONTAINS[c] "Dvorak")'
     )
+    command = [
+        "/usr/bin/log",
+        "show",
+        "--start",
+        start.astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
+        "--end",
+        end.astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
+        "--style",
+        "json",
+        "--info",
+        "--debug",
+        "--predicate",
+        predicate,
+    ]
+    started = shared.timestamp()
+    timed_out = False
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=30, check=False
+        )
+        lines = completed.stdout.splitlines()[-800:]
+        stderr = shared.bounded(completed.stderr, 16_384)
+        exit_code = completed.returncode
+    except subprocess.TimeoutExpired as error:
+        stdout = error.stdout or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        stderr_value = error.stderr or ""
+        if isinstance(stderr_value, bytes):
+            stderr_value = stderr_value.decode(errors="replace")
+        lines = stdout.splitlines()[-800:]
+        stderr = shared.bounded(stderr_value, 16_384)
+        exit_code = None
+        timed_out = True
+    log_path = evidence / f"tis-log-{name}.jsonl"
+    log_path.write_text("\n".join(lines) + ("\n" if lines else ""))
+    result = {
+        "command": command,
+        "startedAt": started,
+        "completedAt": shared.timestamp(),
+        "transitionStartedAt": started_at,
+        "transitionCompletedAt": completed_at,
+        "windowStart": start.isoformat(),
+        "windowEnd": end.isoformat(),
+        "exitCode": exit_code,
+        "timedOut": timed_out,
+        "retainedLineCount": len(lines),
+        "retainedTailLimit": 800,
+        "logPath": log_path.name,
+        "stderr": stderr,
+    }
+    write_json(evidence / f"tis-log-{name}-metadata.json", result)
+    return result
 
 
-def semantic_element(
-    driver: Any, session_id: str, element_id: str
+def native_transition(
+    helper: pathlib.Path,
+    evidence: pathlib.Path,
+    name: str,
+    arguments: list[str],
 ) -> dict[str, Any]:
+    path = evidence / f"transition-{name}.json"
+    command = shared.run_command([str(helper), *arguments, str(path)], timeout=45)
+    data = load_json(path, {})
+    logs = capture_tis_log_window(
+        evidence, name, data.get("startedAt"), data.get("completedAt")
+    )
+    return {"command": command, "data": data, "logs": logs}
+
+
+def current_id(snapshot: dict[str, Any]) -> str | None:
+    data = snapshot.get("data", snapshot)
+    return data.get("current", {}).get("inputSourceID")
+
+
+def update_initial_dvorak_state(evidence: pathlib.Path, snapshot: dict[str, Any]) -> None:
+    sources = snapshot.get("data", {}).get("sources", [])
+    dvorak = next(
+        (source for source in sources if source.get("inputSourceID") == DVORAK_ID),
+        {},
+    )
+    state_path = evidence / "installation-state.json"
+    state = load_json(state_path, {})
+    state["dvorakInitiallyEnabled"] = dvorak.get("enabled") is True
+    write_json(state_path, state)
+
+
+def element_ids(response: dict[str, Any]) -> list[str]:
+    values = response.get("value", [])
+    if not isinstance(values, list):
+        return []
+    return [
+        value.get(ELEMENT_KEY) or value.get("ELEMENT")
+        for value in values
+        if isinstance(value, dict)
+        and (value.get(ELEMENT_KEY) or value.get("ELEMENT"))
+    ]
+
+
+def find_elements(driver: Any, session_id: str, xpath: str) -> list[str]:
+    response = driver.request(
+        "POST",
+        f"/session/{session_id}/elements",
+        {"using": "xpath", "value": xpath},
+    )
+    return element_ids(response)
+
+
+def semantic_element(driver: Any, session_id: str, element_id: str) -> dict[str, Any]:
     names = (
         "identifier",
         "label",
@@ -373,17 +507,202 @@ def semantic_element(
         "value",
         "enabled",
         "hittable",
+        "selected",
         "elementType",
-        "frame",
     )
-    return {
+    value = {
         name: shared.attribute(driver, session_id, element_id, name)
         for name in names
     }
+    value["elementId"] = element_id
+    return value
 
 
 def truthy(value: Any) -> bool:
     return value is True or str(value).lower() == "true"
+
+
+def semantic_values(state: dict[str, Any]) -> set[str]:
+    return {
+        str(state.get(key, "")).strip()
+        for key in ("identifier", "label", "title", "value")
+        if state.get(key) is not None and str(state.get(key, "")).strip()
+    }
+
+
+def unique_input_menu_bar_candidate(
+    states: list[dict[str, Any]], current_name: str
+) -> tuple[dict[str, Any] | None, str]:
+    rules = [
+        (
+            "exact-known-text-input-identifier",
+            lambda state: bool(
+                semantic_values(state)
+                & {
+                    "com.apple.menuextra.textinput",
+                    "com.apple.TextInputMenuAgent",
+                    "TextInputMenuAgent",
+                }
+            ),
+        ),
+        (
+            "exact-input-menu-semantic-name",
+            lambda state: bool(
+                semantic_values(state) & {"Input menu", "Text Input menu"}
+            ),
+        ),
+        (
+            "exact-current-source-name",
+            lambda state: current_name in semantic_values(state),
+        ),
+    ]
+    for rule_name, rule in rules:
+        matches = [state for state in states if rule(state)]
+        if len(matches) == 1:
+            return matches[0], rule_name
+        if len(matches) > 1:
+            return None, f"ambiguous-{rule_name}-{len(matches)}-matches"
+    return None, "no-exact-semantic-input-menu-bar-match"
+
+
+def unique_target_menu_item(
+    states: list[dict[str, Any]], target_name: str
+) -> tuple[dict[str, Any] | None, str]:
+    matches = [state for state in states if target_name in semantic_values(state)]
+    selectable = [
+        state
+        for state in matches
+        if truthy(state.get("enabled")) and truthy(state.get("hittable"))
+    ]
+    if len(selectable) == 1:
+        return selectable[0], "unique-exact-enabled-hittable-target-name"
+    if len(matches) == 1 and not selectable:
+        return None, "exact-target-was-not-enabled-and-hittable"
+    if len(matches) > 1:
+        return None, f"ambiguous-exact-target-{len(matches)}-matches"
+    return None, "exact-target-not-exposed"
+
+
+def menu_selection(
+    driver: Any,
+    helper: pathlib.Path,
+    evidence: pathlib.Path,
+    name: str,
+    target_id: str,
+    target_name: str,
+    current_name: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "attempted": True,
+        "startedAt": shared.timestamp(),
+        "method": "semantic Accessibility through Appium Mac2/XCTest and the SystemUIServer input menu",
+        "target": {"inputSourceID": target_id, "localizedName": target_name},
+        "usesOCRPixelsOrCoordinates": False,
+        "selectionVerified": False,
+    }
+    session_id: str | None = None
+    try:
+        session_id, response = shared.create_bundle_session(
+            driver, "com.apple.systemuiserver", {"appium:noReset": True}
+        )
+        result["session"] = {"created": True, "response": response}
+        menu_bar_elements = find_elements(
+            driver, session_id, "//XCUIElementTypeMenuBarItem"
+        )
+        menu_bar_states = [
+            semantic_element(driver, session_id, element)
+            for element in menu_bar_elements
+        ]
+        result["menuBarCandidates"] = menu_bar_states
+        menu_bar_item, rule = unique_input_menu_bar_candidate(
+            menu_bar_states, current_name
+        )
+        result["menuBarMatchRule"] = rule
+        if not menu_bar_item:
+            raise RuntimeError(
+                "Input menu bar item did not have one exact semantic match: " + rule
+            )
+        driver.request(
+            "POST",
+            f"/session/{session_id}/element/{menu_bar_item['elementId']}/click",
+            {},
+        )
+        result["inputMenuOpened"] = True
+        time.sleep(0.5)
+        result["accessibilitySourceWithMenuOpen"] = shared.save_source(
+            driver, session_id, evidence / f"input-menu-{name}.xml"
+        )
+        menu_elements = find_elements(
+            driver, session_id, "//XCUIElementTypeMenuItem"
+        )
+        menu_states = [
+            semantic_element(driver, session_id, element) for element in menu_elements
+        ]
+        result["menuItemCandidates"] = menu_states
+        target, target_rule = unique_target_menu_item(menu_states, target_name)
+        result["targetMatchRule"] = target_rule
+        if not target:
+            raise RuntimeError(
+                "Intended input source did not have one exact selectable menu item: "
+                + target_rule
+            )
+        result["targetElement"] = target
+        result["sourceImmediatelyBeforeTargetPress"] = source_snapshot(
+            helper,
+            evidence,
+            f"input-sources-before-{name}-menu-selection.json",
+            f"immediately-before-{name}-menu-selection-attempt",
+        )
+        result["targetPressStartedAt"] = shared.timestamp()
+        driver.request(
+            "POST",
+            f"/session/{session_id}/element/{target['elementId']}/click",
+            {},
+        )
+        result["targetPressed"] = True
+        result["targetPressCompletedAt"] = shared.timestamp()
+        result["sourceImmediatelyAfterTargetPress"] = source_snapshot(
+            helper,
+            evidence,
+            f"input-sources-after-{name}-menu-selection.json",
+            f"immediately-after-{name}-menu-selection-attempt",
+        )
+        result["selectionVerified"] = (
+            current_id(result["sourceImmediatelyAfterTargetPress"]) == target_id
+        )
+    except Exception as error:
+        result["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
+        }
+        if "sourceImmediatelyBeforeTargetPress" not in result:
+            result["sourceImmediatelyBeforeTargetPress"] = source_snapshot(
+                helper,
+                evidence,
+                f"input-sources-before-{name}-menu-selection.json",
+                f"before-incomplete-{name}-menu-selection-attempt",
+            )
+        result["sourceImmediatelyAfterTargetPress"] = source_snapshot(
+            helper,
+            evidence,
+            f"input-sources-after-{name}-menu-selection.json",
+            f"after-incomplete-{name}-menu-selection-attempt",
+        )
+    finally:
+        if session_id:
+            try:
+                driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                result.setdefault("session", {})["deleted"] = True
+            except Exception as error:
+                result.setdefault("session", {})["deleteError"] = shared.bounded(
+                    str(error)
+                )
+    result["completedAt"] = shared.timestamp()
+    result["logs"] = capture_tis_log_window(
+        evidence, f"{name}-menu-selection", result["startedAt"], result["completedAt"]
+    )
+    write_json(evidence / f"{name}-menu-selection.json", result)
+    return result
 
 
 def approve_system_settings(
@@ -392,15 +711,22 @@ def approve_system_settings(
     result: dict[str, Any] = {
         "attempted": True,
         "startedAt": shared.timestamp(),
-        "method": "Appium Mac2 Accessibility tree",
+        "method": "exact semantic Accessibility Allow action through Appium Mac2/XCTest",
         "screenshotsDiagnosticOnly": True,
+        "usesOCRPixelsOrCoordinates": False,
+        "semanticAllowVerified": False,
+        "allowClicked": False,
     }
     session_id: str | None = None
+    result["sourceImmediatelyBeforeAllow"] = source_snapshot(
+        helper,
+        evidence,
+        "input-sources-before-accessibility-allow.json",
+        "immediately-before-exact-accessibility-allow-action",
+    )
     try:
         session_id, response = shared.create_bundle_session(
-            driver,
-            "com.apple.systempreferences",
-            {"appium:noReset": True},
+            driver, "com.apple.systempreferences", {"appium:noReset": True}
         )
         result["session"] = {"created": True, "response": response}
         result["accessibilitySourceBefore"] = shared.save_source(
@@ -425,12 +751,20 @@ def approve_system_settings(
         )
         result["semanticAllowVerified"] = exact_allow
         if not exact_allow:
-            raise RuntimeError(f"Refusing to click non-matching consent control: {semantic}")
+            raise RuntimeError(
+                f"Refusing to click non-matching consent control: {semantic}"
+            )
         driver.request(
             "POST", f"/session/{session_id}/element/{allow_element}/click", {}
         )
         result["allowClicked"] = True
-        time.sleep(1.0)
+        result["allowClickedAt"] = shared.timestamp()
+        result["sourceImmediatelyAfterAllow"] = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-after-accessibility-allow.json",
+            "immediately-after-exact-accessibility-allow-action",
+        )
         result["diagnosticScreenshotAfter"] = shared.save_screenshot(
             driver, session_id, evidence / "system-settings-consent-after.png"
         )
@@ -439,6 +773,12 @@ def approve_system_settings(
             "type": type(error).__name__,
             "message": shared.bounded(str(error)),
         }
+        result["sourceImmediatelyAfterAllow"] = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-after-accessibility-allow.json",
+            "after-incomplete-accessibility-allow-action",
+        )
     finally:
         if session_id:
             try:
@@ -448,23 +788,13 @@ def approve_system_settings(
                 result.setdefault("session", {})["deleteError"] = shared.bounded(
                     str(error)
                 )
-
-    observation: dict[str, Any] = {}
-    for attempt in range(1, 61):
-        observation = source_snapshot(
-            helper, evidence, "input-sources-after-approval.json"
-        )
-        if selected(observation):
-            break
-        time.sleep(0.5)
-    result["selectionObservation"] = {
-        "attempts": attempt,
-        "selected": selected(observation),
-        "current": observation.get("data", {}).get("current"),
-        "target": observation.get("target"),
-        "fullEvidencePath": "input-sources-after-approval.json",
-    }
     result["completedAt"] = shared.timestamp()
+    result["logs"] = capture_tis_log_window(
+        evidence,
+        "accessibility-allow",
+        result["startedAt"],
+        result["completedAt"],
+    )
     write_json(evidence / "system-settings-approval.json", result)
     return result
 
@@ -488,101 +818,103 @@ def timeline_entries(path: pathlib.Path) -> list[dict[str, Any]]:
     return entries
 
 
-def exact_text_assertion(diagnostics: dict[str, Any]) -> dict[str, Any]:
-    marked = diagnostics.get("markedRange") or {}
-    composition_ended = (
-        diagnostics.get("hasMarkedText") is False and marked.get("length") == 0
-    )
-    scalars = diagnostics.get("textScalars")
-    passed = scalars == EXPECTED_SCALARS and composition_ended
-    return {
-        "expectedText": EXPECTED_TEXT,
-        "expectedTextScalars": EXPECTED_SCALARS,
-        "actualText": diagnostics.get("text"),
-        "actualTextScalars": scalars,
-        "hasMarkedText": diagnostics.get("hasMarkedText"),
-        "markedRange": marked,
-        "compositionEnded": composition_ended,
-        "passed": passed,
-    }
+def create_client_session(
+    driver: Any, client_app: pathlib.Path, evidence: pathlib.Path, name: str
+) -> tuple[str, pathlib.Path, pathlib.Path]:
+    diagnostics = evidence / f"client-{name}-current.json"
+    timeline = evidence / f"client-{name}-timeline.jsonl"
+    session_id, _ = shared.create_session(driver, client_app, diagnostics, timeline)
+    return session_id, diagnostics, timeline
 
 
-def run_control(
-    evidence: pathlib.Path,
+def dvorak_key_proof(
+    driver: Any,
     helper: pathlib.Path,
     client_app: pathlib.Path,
-) -> int:
-    transcript = evidence / "webdriver-transcript.jsonl"
-    appium_log = evidence / "appium.log"
-    appium_handle = appium_log.open("w")
-    appium_process: subprocess.Popen[str] | None = None
-    driver = shared.WebDriver("http://127.0.0.1:4723", transcript)
-    client_session: str | None = None
-    report: dict[str, Any] = {
+    evidence: pathlib.Path,
+    name: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
         "startedAt": shared.timestamp(),
-        "server": {},
-        "systemSettingsApproval": {"attempted": False},
-        "typedComposition": {"attempted": False},
+        "physicalKeyCode": 37,
+        "physicalUSKey": "l",
+        "expectedDvorakText": "n",
     }
-    completed = False
-
+    session_id: str | None = None
     try:
-        appium_process = subprocess.Popen(
-            ["appium", "--base-path", "/", "--log-no-colors", "--log-timestamp"],
-            stdout=appium_handle,
-            stderr=subprocess.STDOUT,
-            text=True,
+        session_id, diagnostics, _ = create_client_session(
+            driver, client_app, evidence, name
         )
-        report["server"]["pid"] = appium_process.pid
-        report["server"]["readiness"] = shared.wait_for_server(driver)
-        if not report["server"]["readiness"].get("ready"):
-            raise RuntimeError("Appium server did not become ready")
-
-        before_approval = source_snapshot(
-            helper, evidence, "input-sources-before-approval.json"
+        element = shared.find_text_view(driver, session_id)
+        result["focus"] = shared.focus_text_view(
+            driver, session_id, element, diagnostics
         )
-        report["registrationAndDiscovery"] = {
-            "current": before_approval.get("data", {}).get("current"),
-            "sourceCount": before_approval.get("data", {}).get("sourceCount"),
-            "target": before_approval.get("target"),
-            "fullEvidencePath": "input-sources-before-approval.json",
+        result["sourceAtDelivery"] = source_snapshot(
+            helper,
+            evidence,
+            f"input-sources-at-{name}-key-delivery.json",
+            f"source-at-{name}-physical-key-delivery",
+        )
+        key_path = evidence / f"key-{name}-37.json"
+        result["keyCommand"] = shared.run_command(
+            [str(helper), "post-key", "37", "physical-us-l", str(key_path)],
+            timeout=15,
+        )
+        result["keyEvent"] = load_json(key_path, {})
+        time.sleep(1)
+        result["clientDiagnostics"] = shared.diagnostics_snapshot(diagnostics)
+        result["passed"] = (
+            current_id(result["sourceAtDelivery"]) == DVORAK_ID
+            and result["clientDiagnostics"].get("text") == "n"
+        )
+    except Exception as error:
+        result["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
         }
-        report["systemSettingsApproval"] = approve_system_settings(
-            driver, helper, evidence
-        )
+        result["passed"] = False
+    finally:
+        if session_id:
+            try:
+                driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                result["sessionDeleted"] = True
+            except Exception as error:
+                result["sessionDeleteError"] = shared.bounded(str(error))
+    result["completedAt"] = shared.timestamp()
+    write_json(evidence / f"dvorak-key-proof-{name}.json", result)
+    return result
 
-        delivery_source = source_snapshot(
-            helper, evidence, "input-sources-at-delivery.json"
-        )
-        report["sourceAtDelivery"] = {
-            "selected": selected(delivery_source),
-            "current": delivery_source.get("data", {}).get("current"),
-            "target": delivery_source.get("target"),
-            "fullEvidencePath": "input-sources-at-delivery.json",
-        }
 
-        diagnostics = evidence / "client-current.json"
-        timeline = evidence / "client-timeline.jsonl"
-        client_session, session_response = shared.create_session(
-            driver, client_app, diagnostics, timeline
+def squirrel_composition_proof(
+    driver: Any,
+    helper: pathlib.Path,
+    client_app: pathlib.Path,
+    evidence: pathlib.Path,
+    name: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "startedAt": shared.timestamp(),
+        "attempted": True,
+        "deliveryMechanism": "physical-key-code CGEvents at cghidEventTap",
+        "expectedText": EXPECTED_TEXT,
+        "expectedTextScalars": EXPECTED_SCALARS,
+    }
+    session_id: str | None = None
+    try:
+        session_id, diagnostics, timeline_path = create_client_session(
+            driver, client_app, evidence, name
         )
-        report["clientSession"] = {
-            "created": True,
-            "sessionID": client_session,
-            "response": session_response,
-        }
-        element = shared.find_text_view(driver, client_session)
-        focus = shared.focus_text_view(
-            driver, client_session, element, diagnostics
+        element = shared.find_text_view(driver, session_id)
+        result["focus"] = shared.focus_text_view(
+            driver, session_id, element, diagnostics
         )
-        report["clientFocus"] = focus
-        if not focus.get("success"):
-            raise RuntimeError("Mac2 could not focus the native test text view")
-
-        report["diagnosticScreenshotBeforeKeys"] = shared.save_screenshot(
-            driver, client_session, evidence / "before-keys.png"
+        result["sourceAtDelivery"] = source_snapshot(
+            helper,
+            evidence,
+            f"input-sources-at-{name}-composition-delivery.json",
+            f"source-at-{name}-composition-delivery",
         )
-        report["processBeforeKeys"] = process_snapshot()
+        result["processBeforeKeys"] = process_snapshot()
         key_specs = [
             (45, "n"),
             (34, "i"),
@@ -591,9 +923,9 @@ def run_control(
             (31, "o"),
             (49, "space"),
         ]
-        key_results: list[dict[str, Any]] = []
+        keys: list[dict[str, Any]] = []
         for index, (key_code, label) in enumerate(key_specs, start=1):
-            key_path = evidence / f"key-{index}-{label}.json"
+            key_path = evidence / f"key-{name}-{index}-{label}.json"
             command = shared.run_command(
                 [
                     str(helper),
@@ -604,49 +936,242 @@ def run_control(
                 ],
                 timeout=15,
             )
-            time.sleep(0.6)
-            key_results.append(
+            time.sleep(0.5)
+            keys.append(
                 {
                     "index": index,
                     "label": label,
                     "keyCode": key_code,
                     "command": command,
                     "event": load_json(key_path, {}),
-                    "clientDiagnosticsAfter": shared.diagnostics_snapshot(diagnostics),
+                    "clientDiagnosticsAfter": shared.diagnostics_snapshot(
+                        diagnostics
+                    ),
                     "processAfter": process_snapshot(),
                 }
             )
-        time.sleep(1.0)
-
+        time.sleep(1)
         final_diagnostics = shared.diagnostics_snapshot(diagnostics)
-        timeline = timeline_entries(timeline)
-        marked_entries = [entry for entry in timeline if entry.get("hasMarkedText") is True]
-        process_observed = report["processBeforeKeys"].get("processCount", 0) > 0 or any(
-            item["processAfter"].get("processCount", 0) > 0
-            for item in key_results
+        timeline = timeline_entries(timeline_path)
+        marked = [entry for entry in timeline if entry.get("hasMarkedText") is True]
+        process_observed = result["processBeforeKeys"].get("processCount", 0) > 0 or any(
+            key["processAfter"].get("processCount", 0) > 0 for key in keys
         )
-        assertion = exact_text_assertion(final_diagnostics)
-        report["typedComposition"] = {
-            "attempted": True,
-            "deliveryMechanism": "CGEvent at cghidEventTap",
-            "keys": key_results,
-            "finalClientDiagnostics": final_diagnostics,
-            "timelineEntryCount": len(timeline),
-            "markedCompositionObserved": bool(marked_entries),
-            "markedCompositionSamples": marked_entries[:8],
-            "exactTextAssertion": assertion,
-            "processObserved": process_observed,
-            "strongestIndependentActivationEvidence": (
-                "Selected Squirrel source, a live signed Squirrel process, and marked-text transitions"
-                if report["sourceAtDelivery"]["selected"]
-                and process_observed
-                and marked_entries
-                else None
-            ),
-            "independentEvidenceIsNotEquivalentToExactTextAssertion": not assertion["passed"],
+        marked_range = final_diagnostics.get("markedRange") or {}
+        composition_ended = (
+            final_diagnostics.get("hasMarkedText") is False
+            and marked_range.get("length") == 0
+        )
+        exact_passed = (
+            final_diagnostics.get("textScalars") == EXPECTED_SCALARS
+            and composition_ended
+        )
+        source_selected = current_id(result["sourceAtDelivery"]) == MODE_ID
+        result.update(
+            {
+                "keys": keys,
+                "finalClientDiagnostics": final_diagnostics,
+                "timelineEntryCount": len(timeline),
+                "markedCompositionObserved": bool(marked),
+                "markedCompositionSamples": marked[:8],
+                "processObserved": process_observed,
+                "sourceSelectedAtDelivery": source_selected,
+                "compositionEnded": composition_ended,
+                "exactTextAssertionPassed": exact_passed,
+                "actualSelectionAndActivationProven": (
+                    source_selected and process_observed and exact_passed
+                ),
+            }
+        )
+    except Exception as error:
+        result["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
         }
-        report["diagnosticScreenshotAfterKeys"] = shared.save_screenshot(
-            driver, client_session, evidence / "after-keys.png"
+        result["sourceSelectedAtDelivery"] = False
+        result["processObserved"] = False
+        result["exactTextAssertionPassed"] = False
+        result["actualSelectionAndActivationProven"] = False
+    finally:
+        if session_id:
+            try:
+                driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                result["sessionDeleted"] = True
+            except Exception as error:
+                result["sessionDeleteError"] = shared.bounded(str(error))
+    result["completedAt"] = shared.timestamp()
+    write_json(evidence / f"squirrel-composition-proof-{name}.json", result)
+    return result
+
+
+def start_appium(evidence: pathlib.Path) -> tuple[Any, Any, Any, dict[str, Any]]:
+    transcript = evidence / "webdriver-transcript.jsonl"
+    appium_log = (evidence / "appium.log").open("w")
+    driver = shared.WebDriver("http://127.0.0.1:4723", transcript)
+    process = subprocess.Popen(
+        ["appium", "--base-path", "/", "--log-no-colors", "--log-timestamp"],
+        stdout=appium_log,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    server = {
+        "pid": process.pid,
+        "readiness": shared.wait_for_server(driver),
+    }
+    return driver, process, appium_log, server
+
+
+def stop_appium(process: Any, handle: Any, server: dict[str, Any]) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+    server["exitCode"] = process.returncode
+    handle.close()
+
+
+def run_control(
+    evidence: pathlib.Path,
+    helper: pathlib.Path,
+    client_app: pathlib.Path,
+    installed_app: pathlib.Path,
+) -> int:
+    report: dict[str, Any] = {
+        "startedAt": shared.timestamp(),
+        "stageOrder": [
+            "same-session Dvorak public and Accessibility controls",
+            "Squirrel registration",
+            "exact parent enablement",
+            "exact intended mode enablement",
+            "exact Accessibility Allow action",
+            "public TIS selection",
+            "semantic Accessibility input-menu selection",
+            "current-source, process, and physical-key/composition proof",
+        ],
+        "server": {},
+    }
+    appium_process = None
+    appium_handle = None
+    completed = False
+    try:
+        driver, appium_process, appium_handle, report["server"] = start_appium(
+            evidence
+        )
+        if not report["server"]["readiness"].get("ready"):
+            raise RuntimeError("Appium server did not become ready")
+
+        initial = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-before-dvorak-control.json",
+            "before-same-session-dvorak-control",
+        )
+        report["initialSources"] = initial
+        update_initial_dvorak_state(evidence, initial)
+
+        report["dvorakEnable"] = native_transition(
+            helper,
+            evidence,
+            "dvorak-enable",
+            ["enable", DVORAK_ID, LAYOUT_TYPE],
+        )
+        report["dvorakPublicSelection"] = native_transition(
+            helper,
+            evidence,
+            "dvorak-public-selection",
+            ["select", DVORAK_ID, LAYOUT_TYPE, "-"],
+        )
+        report["dvorakPublicKeyProof"] = dvorak_key_proof(
+            driver, helper, client_app, evidence, "public-api"
+        )
+        report["restoreUSAfterDvorakPublic"] = native_transition(
+            helper,
+            evidence,
+            "restore-us-after-dvorak-public",
+            ["select", US_ID, LAYOUT_TYPE, "-"],
+        )
+        report["dvorakMenuSelection"] = menu_selection(
+            driver,
+            helper,
+            evidence,
+            "dvorak",
+            DVORAK_ID,
+            "Dvorak",
+            "U.S.",
+        )
+        report["dvorakMenuKeyProof"] = dvorak_key_proof(
+            driver, helper, client_app, evidence, "accessibility-menu"
+        )
+        report["restoreUSBeforeSquirrel"] = native_transition(
+            helper,
+            evidence,
+            "restore-us-before-squirrel",
+            ["select", US_ID, LAYOUT_TYPE, "-"],
+        )
+
+        report["squirrelRegistration"] = native_transition(
+            helper,
+            evidence,
+            "squirrel-registration",
+            ["register", str(installed_app)],
+        )
+        report["squirrelParentEnable"] = native_transition(
+            helper,
+            evidence,
+            "squirrel-parent-enable",
+            ["enable", PARENT_ID, PARENT_TYPE],
+        )
+        report["squirrelModeEnable"] = native_transition(
+            helper,
+            evidence,
+            "squirrel-mode-enable",
+            ["enable", MODE_ID, MODE_TYPE],
+        )
+        report["systemSettingsApproval"] = approve_system_settings(
+            driver, helper, evidence
+        )
+        report["squirrelPublicSelection"] = native_transition(
+            helper,
+            evidence,
+            "squirrel-public-selection",
+            ["select", MODE_ID, MODE_TYPE, PARENT_ID],
+        )
+        report["squirrelPublicComposition"] = squirrel_composition_proof(
+            driver, helper, client_app, evidence, "public-api"
+        )
+
+        if report["squirrelPublicSelection"]["data"].get("selectionVerified"):
+            report["restoreUSBetweenSquirrelAttempts"] = native_transition(
+                helper,
+                evidence,
+                "restore-us-between-squirrel-attempts",
+                ["select", US_ID, LAYOUT_TYPE, "-"],
+            )
+        else:
+            report["restoreUSBetweenSquirrelAttempts"] = {
+                "attempted": False,
+                "reason": "Public selection left U.S. current, so no restore transition was needed.",
+            }
+
+        report["squirrelMenuSelection"] = menu_selection(
+            driver,
+            helper,
+            evidence,
+            "squirrel",
+            MODE_ID,
+            "Squirrel - Simplified",
+            "U.S.",
+        )
+        report["squirrelMenuComposition"] = squirrel_composition_proof(
+            driver, helper, client_app, evidence, "accessibility-menu"
+        )
+        report["finalSourcesBeforeCleanup"] = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-final-before-cleanup.json",
+            "final-state-before-unconditional-cleanup",
         )
         completed = True
     except Exception as error:
@@ -656,205 +1181,269 @@ def run_control(
             "timestamp": shared.timestamp(),
         }
     finally:
-        if client_session:
-            try:
-                driver.request("DELETE", f"/session/{client_session}", timeout=30)
-                report.setdefault("clientSession", {})["deleted"] = True
-            except Exception as error:
-                report.setdefault("clientSession", {})["deleteError"] = shared.bounded(
-                    str(error)
-                )
-        if appium_process:
-            appium_process.terminate()
-            try:
-                appium_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                appium_process.kill()
-                appium_process.wait(timeout=5)
-            report["server"]["exitCode"] = appium_process.returncode
-        appium_handle.close()
-
+        if appium_process is not None and appium_handle is not None:
+            stop_appium(appium_process, appium_handle, report["server"])
     report["completedAt"] = shared.timestamp()
     report["executionCompleted"] = completed
     write_json(evidence / "control-experiment.json", report)
     summary = load_json(evidence / "summary.json", {})
-    summary["controlExperiment"] = report
+    summary["controlExperimentEvidencePath"] = "control-experiment.json"
+    summary["experimentExecutionCompleted"] = completed
     if not completed:
         summary["status"] = "execution-failed"
     write_json(evidence / "summary.json", summary)
     return 0 if completed else 3
 
 
-def incorporate_selection(evidence: pathlib.Path) -> None:
-    selection = load_json(evidence / "input-source-selection.json", {})
-    summary = load_json(evidence / "summary.json", {})
-    summary["tisRegistrationAndSelection"] = {
-        "registrationStatus": selection.get("registrationStatus"),
-        "discoveryAttempts": selection.get("discoveryAttempts"),
-        "targetAtDiscovery": selection.get("targetAtDiscovery"),
-        "enableStatus": selection.get("enableStatus"),
-        "expectedSelectedInputSourceID": selection.get(
-            "expectedSelectedInputSourceID"
+def nested(value: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    current: Any = value
+    for key in keys:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+    return default if current is None else current
+
+
+def relevant_source(snapshot: dict[str, Any], source_id: str) -> dict[str, Any]:
+    data = snapshot.get("data", snapshot)
+    return next(
+        (
+            source
+            for source in data.get("sources", [])
+            if source.get("inputSourceID") == source_id
         ),
-        "selectionAttemptCount": len(selection.get("selectionAttempts", [])),
-        "selectionStatuses": [
-            attempt.get("selectionStatus")
-            for attempt in selection.get("selectionAttempts", [])
-        ],
-        "finalSelectionStatus": selection.get("finalSelectionStatus"),
-        "selectedSource": selection.get("selectedSource"),
-        "selectionVerified": selection.get("selectionVerified", False),
-        "fullEvidencePath": "input-source-selection.json",
+        {"present": False},
+    )
+
+
+def final_diagnosis(
+    summary: dict[str, Any], report: dict[str, Any]
+) -> dict[str, Any]:
+    registration = nested(report, "squirrelRegistration", "data", default={})
+    parent_enable = nested(report, "squirrelParentEnable", "data", default={})
+    mode_enable = nested(report, "squirrelModeEnable", "data", default={})
+    approval = report.get("systemSettingsApproval", {})
+    public = nested(report, "squirrelPublicSelection", "data", default={})
+    menu = report.get("squirrelMenuSelection", {})
+    dvorak_public = nested(report, "dvorakPublicSelection", "data", default={})
+    dvorak_menu = report.get("dvorakMenuSelection", {})
+    public_composition = report.get("squirrelPublicComposition", {})
+    menu_composition = report.get("squirrelMenuComposition", {})
+
+    registration_after = registration.get("after", {})
+    parent_after = parent_enable.get("after", {})
+    mode_after = mode_enable.get("after", {})
+    approval_before = nested(
+        approval, "sourceImmediatelyBeforeAllow", "data", default={}
+    )
+    approval_after = nested(
+        approval, "sourceImmediatelyAfterAllow", "data", default={}
+    )
+    public_prerequisites = public.get(
+        "documentedPrerequisitesImmediatelyBefore", {}
+    )
+    target_before_public = relevant_source(public.get("before", {}), MODE_ID)
+    parent_before_public = relevant_source(public.get("before", {}), PARENT_ID)
+    approval_before_prerequisites = nested(
+        approval_before, "prerequisites", "squirrelHans", default={}
+    )
+    approval_after_prerequisites = nested(
+        approval_after, "prerequisites", "squirrelHans", default={}
+    )
+
+    wrong_parent_or_mode = not (
+        public_prerequisites.get("exactTargetUnique") is True
+        and public_prerequisites.get("exactParentUnique") is True
+        and public_prerequisites.get("parentModeRelationshipEstablished") is True
+    )
+    select_capable_false = target_before_public.get("selectCapable") is not True
+    source_disabled = target_before_public.get("enabled") is not True
+    parent_disabled = parent_before_public.get("enabled") is not True
+    all_prerequisites = (
+        public_prerequisites.get(
+            "allDocumentedSelectionPrerequisitesSatisfied"
+        )
+        is True
+    )
+    public_rejected = public.get("status") == -50
+    public_selected = public.get("selectionVerified") is True
+    menu_selected = menu.get("selectionVerified") is True
+    actual_activation = (
+        public_composition.get("actualSelectionAndActivationProven") is True
+        or menu_composition.get("actualSelectionAndActivationProven") is True
+    )
+    approval_changed_eligibility = (
+        approval_before_prerequisites != approval_after_prerequisites
+    )
+    approval_no_change = (
+        approval.get("semanticAllowVerified") is True
+        and approval.get("allowClicked") is True
+        and not approval_changed_eligibility
+    )
+
+    parent_after_registration = relevant_source(registration_after, PARENT_ID)
+    parent_after_enable = relevant_source(parent_after, PARENT_ID)
+    mode_after_enable = relevant_source(mode_after, MODE_ID)
+    minimal_transition_fixed_parent = (
+        parent_after_registration.get("enabled") is False
+        and parent_after_enable.get("enabled") is True
+    )
+
+    if public_selected or menu_selected:
+        unresolved = (
+            "none: Squirrel became current through "
+            + ("public TIS selection" if public_selected else "the semantic input menu")
+        )
+    elif all_prerequisites and public_rejected:
+        unresolved = (
+            "public selection outcome: Dvorak returned 0 and became current, while exact Squirrel Hans returned -50 and stayed non-current despite every documented prerequisite being true"
+        )
+    elif wrong_parent_or_mode:
+        unresolved = "exact parent/mode identity or documented relationship"
+    elif select_capable_false:
+        unresolved = "target select-capable property was not true"
+    elif source_disabled:
+        unresolved = "intended Squirrel mode was disabled"
+    elif parent_disabled:
+        unresolved = "documented Squirrel parent input method was disabled"
+    else:
+        unresolved = "selection outcome was not established"
+
+    bounded_contradiction = all_prerequisites and public_rejected and not public_selected
+    if bounded_contradiction:
+        conclusion = (
+            "Bounded contradiction: immediately before the exact public selection call, Squirrel Hans was uniquely identified, select-capable, enabled, related to one enabled parent input method, and refreshed live; TISSelectInputSource still returned paramErr (-50), meaning the source was not selectable. No private policy explanation is asserted."
+        )
+    elif actual_activation:
+        conclusion = (
+            "Actual Squirrel selection and activation succeeded, proven by the exact current source, a live Squirrel process, and deterministic committed composition."
+        )
+    elif public_selected or menu_selected:
+        conclusion = (
+            "Squirrel became the exact current source, but process plus deterministic composition did not fully prove activation."
+        )
+    else:
+        conclusion = (
+            "Squirrel selection was not established; the first unsatisfied documented prerequisite or exact-source relationship is reported without a private policy explanation."
+        )
+
+    dvorak_key_passed = (
+        nested(report, "dvorakPublicKeyProof", "passed") is True
+    )
+    return {
+        "contractClassification": {
+            "falseSelectCapableProperty": select_capable_false,
+            "disabledSource": source_disabled,
+            "disabledParent": parent_disabled,
+            "wrongParentOrModeChoice": wrong_parent_or_mode,
+            "uiApprovalNotChangingEligibility": approval_no_change,
+            "apiRejectionDespiteEveryDocumentedPrerequisite": bounded_contradiction,
+            "actualSuccessfulSquirrelSelection": public_selected or menu_selected,
+            "actualSquirrelSelectionAndActivationProven": actual_activation,
+        },
+        "documentedPrerequisitesImmediatelyBeforePublicSelection": public_prerequisites,
+        "publicSelection": {
+            "status": public.get("status"),
+            "paramErrMeansSourceIsNotSelectable": public.get(
+                "paramErrMeansSourceIsNotSelectable"
+            ),
+            "selectionVerifiedByCurrentSource": public_selected,
+        },
+        "semanticInputMenuSelection": {
+            "targetPressed": menu.get("targetPressed", False),
+            "selectionVerifiedByCurrentSource": menu_selected,
+            "error": menu.get("error"),
+        },
+        "approvalEligibilityComparison": {
+            "before": approval_before_prerequisites,
+            "after": approval_after_prerequisites,
+            "changed": approval_changed_eligibility,
+            "exactAllowActionProven": (
+                approval.get("semanticAllowVerified") is True
+                and approval.get("allowClicked") is True
+            ),
+        },
+        "smallestCounterfactualResult": {
+            "transition": summary.get("smallestCounterfactual", {}).get(
+                "transition"
+            ),
+            "parentWasDisabledAfterRegistration": (
+                parent_after_registration.get("enabled") is False
+            ),
+            "exactParentBecameEnabled": (
+                parent_after_enable.get("enabled") is True
+            ),
+            "intendedModeBecameEnabled": mode_after_enable.get("enabled") is True,
+            "minimalTransitionFixedParentPrerequisite": minimal_transition_fixed_parent,
+            "minimalTransitionWasSufficientForSelection": (
+                minimal_transition_fixed_parent and (public_selected or menu_selected)
+            ),
+            "disconfirmedAsSufficient": (
+                minimal_transition_fixed_parent
+                and not (public_selected or menu_selected)
+            ),
+        },
+        "sameSessionDvorakControl": {
+            "publicStatus": dvorak_public.get("status"),
+            "publicSelectionVerified": dvorak_public.get("selectionVerified", False),
+            "semanticMenuSelectionVerified": dvorak_menu.get(
+                "selectionVerified", False
+            ),
+            "physicalKeyCode37ProducedN": dvorak_key_passed,
+        },
+        "earliestObservedDivergence": (
+            "after registration: Dvorak needed no parent, while Squirrel Hans had a documented parent with enabled=false"
+            if parent_after_registration.get("enabled") is False
+            else "no disabled Squirrel parent was observed after registration"
+        ),
+        "earliestUnresolvedDivergenceAfterDocumentedTransitions": unresolved,
+        "boundedContradiction": bounded_contradiction,
+        "privatePolicyExplanationAsserted": False,
+        "conclusion": conclusion,
+        "disconfirmingEvidence": {
+            "dvorakPublicSelectionAndPhysicalMapping": (
+                dvorak_public.get("selectionVerified") is True and dvorak_key_passed
+            ),
+            "squirrelParentDisabledAfterRegistration": (
+                parent_after_registration.get("enabled") is False
+            ),
+            "squirrelParentEnabledBeforeSelection": (
+                parent_before_public.get("enabled") is True
+            ),
+            "squirrelModeSelectCapableBeforeSelection": (
+                target_before_public.get("selectCapable") is True
+            ),
+            "squirrelModeEnabledBeforeSelection": (
+                target_before_public.get("enabled") is True
+            ),
+            "accessibilityMenuAttemptRetained": menu.get("attempted", False),
+            "currentSourceSnapshotsRetained": True,
+            "processAndCompositionAttemptsRetained": True,
+            "boundedTISLogWindowsRetained": True,
+        },
+        "scopeLimit": "This diagnosis is evidence only and authorizes no implementation, security, runner, or infrastructure change.",
     }
-    write_json(evidence / "summary.json", summary)
 
 
 def finalize(evidence: pathlib.Path, producer_status: int) -> None:
     summary = load_json(evidence / "summary.json", {})
-    selection = load_json(evidence / "input-source-selection.json", {})
-    control = load_json(evidence / "control-experiment.json", {})
-    approval = load_json(evidence / "system-settings-approval.json", {})
+    report = load_json(evidence / "control-experiment.json", {})
     cleanup = load_json(evidence / "cleanup.json", {})
     provenance_data = load_json(evidence / "provenance.json", {})
-    process_before_registration = load_json(
-        evidence / "process-after-build-before-registration.json", {}
-    )
-
-    typed = control.get("typedComposition", {})
-    exact = typed.get("exactTextAssertion", {})
-    source_selected = bool(selection.get("selectionVerified"))
-    process_observed = bool(typed.get("processObserved"))
-    marked_observed = bool(typed.get("markedCompositionObserved"))
-    exact_passed = bool(exact.get("passed"))
-    approval_proven = bool(
-        approval.get("semanticAllowVerified") and approval.get("allowClicked")
-    )
-    activation_proven = source_selected and process_observed and exact_passed
-    independent_activation = source_selected and process_observed and marked_observed
-
-    registration_status = selection.get("registrationStatus")
-    selection_status = selection.get("finalSelectionStatus")
-    if registration_status != 0:
-        earliest = "registration: Squirrel diverged before the disposable Unicorn, whose registration returned 0"
-        leading = "The control did not reach the prior selection boundary, so no runner-versus-Unicorn diagnosis is supported."
-        visible = f"Squirrel registration returned {registration_status}."
-    elif source_selected:
-        earliest = "selection: built-in Dvorak and Squirrel returned 0 and became current; disposable Unicorn returned -50 and remained on U.S."
-        leading = "A general hosted-runner prohibition on third-party input methods is disproved. The failure is specific to the disposable Unicorn probe or a condition it uniquely introduces, but this experiment does not identify which one."
-        visible = (
-            f"Squirrel became current with TISSelectInputSource={selection_status}; "
-            f"processObserved={process_observed}, exactComposition={exact_passed}."
-        )
-    else:
-        earliest = "selection: built-in Dvorak became current with status 0; Squirrel and disposable Unicorn did not become current"
-        leading = "The result remains consistent with a hosted-runner restriction on third-party input-source approval or selection, rather than a defect unique to disposable Unicorn."
-        visible = (
-            f"Squirrel was registered and discovered but remained unselected; "
-            f"final TISSelectInputSource={selection_status}, current source="
-            f"{(selection.get('selectedSource') or {}).get('inputSourceID')}."
-        )
-
     summary["completedAt"] = shared.timestamp()
     summary["producerExitCode"] = producer_status
     summary["actionsRunURL"] = github_run_url() or summary.get("actionsRunURL")
-    summary["systemSettingsApproval"] = {
-        "attempted": approval.get("attempted", False),
-        "semanticAllowVerified": approval.get("semanticAllowVerified", False),
-        "allowClicked": approval.get("allowClicked", False),
-        "approvalProvenThroughAccessibility": approval_proven,
-        "selectionObservedAfterApproval": approval.get(
-            "selectionObservation", {}
-        ).get("selected", False),
-        "fullEvidencePath": "system-settings-approval.json",
-    }
-    summary["activationEvidence"] = {
-        "sourceSelected": source_selected,
-        "selectedSource": selection.get("selectedSource"),
-        "tisSelectInputSourceReturnValue": selection_status,
-        "processAbsentAfterBuildBeforeRegistration": process_before_registration.get(
-            "processAbsent", False
-        ),
-        "processObserved": process_observed,
-        "markedCompositionObserved": marked_observed,
-        "exactTextAssertionPassed": exact_passed,
-        "actualText": exact.get("actualText"),
-        "actualTextScalars": exact.get("actualTextScalars"),
-        "actualActivationProven": activation_proven,
-        "strongIndependentActivationEvidence": independent_activation,
-        "independentEvidenceEquivalentToDeterministicTextProof": (
-            independent_activation and exact_passed
-        ),
-        "qualification": (
-            None
-            if exact_passed
-            else "Marked text and process evidence, if present, are retained as independent activation evidence and are not called equivalent to the deterministic committed-text assertion."
-        ),
-    }
-    summary["comparison"] = {
-        "stageOrder": [
-            "registration and discovery",
-            "System Settings approval",
-            "TIS selection",
-            "IMK process launch",
-            "hardware-style composition",
-        ],
-        "builtIn": summary.get("fixedPriorEvidence", {}).get("builtIn"),
-        "thirdPartySquirrel": {
-            "registrationStatus": registration_status,
-            "discovered": bool(selection.get("targetAtDiscovery", {}).get("present")),
-            "systemSettingsApprovalProven": approval_proven,
-            "selectionStatus": selection_status,
-            "selected": source_selected,
-            "processObserved": process_observed,
-            "markedCompositionObserved": marked_observed,
-            "exactCompositionPassed": exact_passed,
-        },
-        "disposableUnicorn": summary.get("fixedPriorEvidence", {}).get(
-            "disposableUnicorn"
-        ),
-        "earliestDivergence": earliest,
-    }
-    summary["causalTerms"] = {
-        "initiatingTrigger": summary.get("causalTerms", {}).get(
-            "initiatingTrigger"
-        ),
-        "maskingCondition": summary.get("causalTerms", {}).get("maskingCondition"),
-        "visibleSymptom": visible,
-    }
-    summary["diagnosis"] = {
-        "leadingExplanation": leading,
-        "smallestCounterfactual": summary.get("smallestCounterfactual", {}).get(
-            "changedVariable"
-        ),
-        "evidenceThatCouldDisproveLeadingExplanation": (
-            "If Squirrel had reproduced Unicorn's -50 result and stayed on U.S., that would have falsified the product-specific explanation."
-            if source_selected
-            else "A selected Squirrel identifier, a live Squirrel IMK process, or marked/committed Squirrel composition would disprove the leading general-restriction explanation; none is treated as present unless recorded independently."
-        ),
-        "scopeLimit": "This diagnosis is evidence only and does not authorize product, security, runner, or infrastructure changes.",
-    }
+    summary["diagnosis"] = final_diagnosis(summary, report)
     summary["cleanup"] = cleanup
-    summary["cleanupPassed"] = bool(cleanup.get("success"))
-    summary["experimentExecutionCompleted"] = bool(
-        control.get("executionCompleted")
-    )
-    summary["provenancePassed"] = bool(
-        provenance_data.get("allRequiredVerificationPassed")
+    summary["cleanupPassed"] = cleanup.get("success") is True
+    summary["provenancePassed"] = (
+        provenance_data.get("allRequiredVerificationPassed") is True
     )
     summary["boundedExperimentCompleted"] = (
         producer_status == 0
-        and summary["experimentExecutionCompleted"]
-        and summary["provenancePassed"]
+        and report.get("executionCompleted") is True
         and summary["cleanupPassed"]
-    )
-    summary["controlResult"] = (
-        "third-party activation proven"
-        if activation_proven
-        else (
-            "third-party activation independently observed but deterministic text assertion not proven"
-            if independent_activation
-            else "third-party activation not proven"
-        )
+        and summary["provenancePassed"]
     )
     summary["status"] = (
         "completed" if summary["boundedExperimentCompleted"] else "incomplete"
@@ -883,9 +1472,7 @@ def main() -> int:
     run_parser.add_argument("evidence", type=pathlib.Path)
     run_parser.add_argument("helper", type=pathlib.Path)
     run_parser.add_argument("client_app", type=pathlib.Path)
-
-    selection_parser = commands.add_parser("incorporate-selection")
-    selection_parser.add_argument("evidence", type=pathlib.Path)
+    run_parser.add_argument("installed_app", type=pathlib.Path)
 
     finalize_parser = commands.add_parser("finalize")
     finalize_parser.add_argument("evidence", type=pathlib.Path)
@@ -901,10 +1488,12 @@ def main() -> int:
     if arguments.command == "provenance":
         return provenance(arguments.evidence, arguments.package, arguments.app)
     if arguments.command == "run":
-        return run_control(arguments.evidence, arguments.helper, arguments.client_app)
-    if arguments.command == "incorporate-selection":
-        incorporate_selection(arguments.evidence)
-        return 0
+        return run_control(
+            arguments.evidence,
+            arguments.helper,
+            arguments.client_app,
+            arguments.installed_app,
+        )
     if arguments.command == "finalize":
         finalize(arguments.evidence, arguments.producer_status)
         return 0

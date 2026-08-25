@@ -5,15 +5,27 @@ import CoreGraphics
 import Foundation
 import SystemConfiguration
 
+private let dvorakID = "com.apple.keylayout.Dvorak"
+private let usID = "com.apple.keylayout.US"
+private let squirrelBundleID = "im.rime.inputmethod.Squirrel"
+private let squirrelParentID = "im.rime.inputmethod.Squirrel"
+private let squirrelModeID = "im.rime.inputmethod.Squirrel.Hans"
+
 private let sourceIDKey = kTISPropertyInputSourceID!
 private let bundleIDKey = kTISPropertyBundleID!
 private let inputModeIDKey = kTISPropertyInputModeID!
 private let localizedNameKey = kTISPropertyLocalizedName!
 private let categoryKey = kTISPropertyInputSourceCategory!
 private let typeKey = kTISPropertyInputSourceType!
+private let selectCapableKey = kTISPropertyInputSourceIsSelectCapable!
 private let enabledKey = kTISPropertyInputSourceIsEnabled!
+private let enableCapableKey = kTISPropertyInputSourceIsEnableCapable!
 private let selectedKey = kTISPropertyInputSourceIsSelected!
 private let asciiCapableKey = kTISPropertyInputSourceIsASCIICapable!
+
+private let parentType = kTISTypeKeyboardInputMethodModeEnabled as String
+private let modeType = kTISTypeKeyboardInputMode as String
+private let layoutType = kTISTypeKeyboardLayout as String
 
 private func stringProperty(_ source: TISInputSource, _ key: CFString) -> String? {
     guard let pointer = TISGetInputSourceProperty(source, key) else { return nil }
@@ -26,43 +38,211 @@ private func boolProperty(_ source: TISInputSource, _ key: CFString) -> Bool? {
     return CFBooleanGetValue(value)
 }
 
+private func jsonValue(_ value: String?) -> Any {
+    value ?? NSNull()
+}
+
+private func jsonValue(_ value: Bool?) -> Any {
+    value ?? NSNull()
+}
+
+private func jsonValue(_ value: OSStatus?) -> Any {
+    value ?? NSNull()
+}
+
 private func allSources() -> [TISInputSource] {
     guard let unmanaged = TISCreateInputSourceList(nil, true) else { return [] }
     return (unmanaged.takeRetainedValue() as NSArray).map { $0 as! TISInputSource }
-}
-
-private func source(withID identifier: String) -> TISInputSource? {
-    allSources().first { stringProperty($0, sourceIDKey) == identifier }
-}
-
-private func source(bundleID: String, modeID: String) -> TISInputSource? {
-    let sources = allSources()
-    return sources.first {
-        stringProperty($0, sourceIDKey) == modeID
-            || stringProperty($0, inputModeIDKey) == modeID
-    } ?? sources.first {
-        stringProperty($0, bundleIDKey) == bundleID
-            && stringProperty($0, typeKey) == (kTISTypeKeyboardInputMode as String)
-    }
 }
 
 private func currentSource() -> TISInputSource? {
     TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
 }
 
-private func summary(_ source: TISInputSource?) -> [String: Any] {
+private func sourceSummary(_ source: TISInputSource?) -> [String: Any] {
     guard let source else { return ["present": false] }
     return [
         "present": true,
-        "inputSourceID": stringProperty(source, sourceIDKey) as Any,
-        "bundleID": stringProperty(source, bundleIDKey) as Any,
-        "inputModeID": stringProperty(source, inputModeIDKey) as Any,
-        "localizedName": stringProperty(source, localizedNameKey) as Any,
-        "category": stringProperty(source, categoryKey) as Any,
-        "type": stringProperty(source, typeKey) as Any,
-        "enabled": boolProperty(source, enabledKey) as Any,
-        "selected": boolProperty(source, selectedKey) as Any,
-        "asciiCapable": boolProperty(source, asciiCapableKey) as Any,
+        "inputSourceID": jsonValue(stringProperty(source, sourceIDKey)),
+        "bundleID": jsonValue(stringProperty(source, bundleIDKey)),
+        "inputModeID": jsonValue(stringProperty(source, inputModeIDKey)),
+        "localizedName": jsonValue(stringProperty(source, localizedNameKey)),
+        "type": jsonValue(stringProperty(source, typeKey)),
+        "category": jsonValue(stringProperty(source, categoryKey)),
+        "selectCapable": jsonValue(boolProperty(source, selectCapableKey)),
+        "enabled": jsonValue(boolProperty(source, enabledKey)),
+        "enableCapable": jsonValue(boolProperty(source, enableCapableKey)),
+        "selected": jsonValue(boolProperty(source, selectedKey)),
+        "asciiCapable": jsonValue(boolProperty(source, asciiCapableKey)),
+    ]
+}
+
+private func sourceRole(_ source: TISInputSource) -> String {
+    let identifier = stringProperty(source, sourceIDKey)
+    let bundleID = stringProperty(source, bundleIDKey)
+    let type = stringProperty(source, typeKey)
+    if identifier == dvorakID && type == layoutType { return "dvorak-layout" }
+    if bundleID == squirrelBundleID && type == parentType {
+        return "squirrel-input-method-parent"
+    }
+    if bundleID == squirrelBundleID && type == modeType { return "squirrel-input-mode" }
+    return "unexpected-relevant-source-type"
+}
+
+private func relevantSources(from sources: [TISInputSource]) -> [TISInputSource] {
+    sources.filter {
+        stringProperty($0, sourceIDKey) == dvorakID
+            || stringProperty($0, bundleIDKey) == squirrelBundleID
+    }.sorted {
+        let lhs = stringProperty($0, sourceIDKey) ?? ""
+        let rhs = stringProperty($1, sourceIDKey) ?? ""
+        if lhs != rhs { return lhs < rhs }
+        return (stringProperty($0, typeKey) ?? "") < (stringProperty($1, typeKey) ?? "")
+    }
+}
+
+private func exactMatches(
+    in sources: [TISInputSource], identifier: String, expectedType: String
+) -> [TISInputSource] {
+    sources.filter {
+        stringProperty($0, sourceIDKey) == identifier
+            && stringProperty($0, typeKey) == expectedType
+    }
+}
+
+private func relationshipSummary(
+    parents: [TISInputSource], modes: [TISInputSource]
+) -> [[String: Any]] {
+    modes.map { mode in
+        let modeSourceID = stringProperty(mode, sourceIDKey)
+        let modeInputModeID = stringProperty(mode, inputModeIDKey)
+        let modeBundleID = stringProperty(mode, bundleIDKey)
+        let candidates = parents.filter { parent in
+            guard let parentSourceID = stringProperty(parent, sourceIDKey) else {
+                return false
+            }
+            let identifiers = [modeSourceID, modeInputModeID].compactMap { $0 }
+            return stringProperty(parent, bundleIDKey) == modeBundleID
+                && identifiers.contains { $0.hasPrefix(parentSourceID + ".") }
+        }
+        return [
+            "modeSourceID": jsonValue(modeSourceID),
+            "modeInputModeID": jsonValue(modeInputModeID),
+            "documentedModeType": stringProperty(mode, typeKey) == modeType,
+            "parentCandidateIDs": candidates.compactMap {
+                stringProperty($0, sourceIDKey)
+            },
+            "uniqueParentEstablished": candidates.count == 1,
+        ]
+    }
+}
+
+private func prerequisites(
+    sources: [TISInputSource], targetID: String, expectedType: String,
+    parentID: String? = nil
+) -> [String: Any] {
+    let targets = exactMatches(in: sources, identifier: targetID, expectedType: expectedType)
+    let target = targets.count == 1 ? targets[0] : nil
+    var result: [String: Any] = [
+        "targetID": targetID,
+        "expectedType": expectedType,
+        "exactTargetCount": targets.count,
+        "exactTargetUnique": targets.count == 1,
+        "targetSelectCapableIsTrue": target.flatMap {
+            boolProperty($0, selectCapableKey)
+        } == true,
+        "targetEnabledIsTrue": target.flatMap {
+            boolProperty($0, enabledKey)
+        } == true,
+    ]
+    var allSatisfied = targets.count == 1
+        && target.flatMap { boolProperty($0, selectCapableKey) } == true
+        && target.flatMap { boolProperty($0, enabledKey) } == true
+
+    if let parentID {
+        let parents = exactMatches(in: sources, identifier: parentID, expectedType: parentType)
+        let parent = parents.count == 1 ? parents[0] : nil
+        let relationshipEstablished: Bool
+        if let target, let parent,
+            let targetSourceID = stringProperty(target, sourceIDKey),
+            let targetBundleID = stringProperty(target, bundleIDKey),
+            let parentSourceID = stringProperty(parent, sourceIDKey)
+        {
+            relationshipEstablished = targetBundleID == stringProperty(parent, bundleIDKey)
+                && targetSourceID.hasPrefix(parentSourceID + ".")
+        } else {
+            relationshipEstablished = false
+        }
+        result["parentID"] = parentID
+        result["parentExpectedType"] = parentType
+        result["exactParentCount"] = parents.count
+        result["exactParentUnique"] = parents.count == 1
+        result["parentEnabledIsTrue"] = parent.flatMap {
+            boolProperty($0, enabledKey)
+        } == true
+        result["parentModeRelationshipEstablished"] = relationshipEstablished
+        allSatisfied = allSatisfied
+            && parents.count == 1
+            && parent.flatMap { boolProperty($0, enabledKey) } == true
+            && relationshipEstablished
+    }
+    result["allDocumentedSelectionPrerequisitesSatisfied"] = allSatisfied
+    return result
+}
+
+private func snapshotValue(label: String) -> [String: Any] {
+    let sources = allSources()
+    let relevant = relevantSources(from: sources)
+    let squirrel = relevant.filter {
+        stringProperty($0, bundleIDKey) == squirrelBundleID
+    }
+    let parents = squirrel.filter { stringProperty($0, typeKey) == parentType }
+    let modes = squirrel.filter { stringProperty($0, typeKey) == modeType }
+    return [
+        "schemaVersion": 2,
+        "timestamp": timestamp(),
+        "label": label,
+        "current": sourceSummary(currentSource()),
+        "relevantSourceCount": relevant.count,
+        "sources": relevant.map { source in
+            var summary = sourceSummary(source)
+            summary["role"] = sourceRole(source)
+            return summary
+        },
+        "enumeration": [
+            "dvorakCount": relevant.filter {
+                stringProperty($0, sourceIDKey) == dvorakID
+            }.count,
+            "squirrelParentCount": parents.count,
+            "squirrelModeCount": modes.count,
+            "squirrelUnexpectedTypeCount": squirrel.count - parents.count - modes.count,
+            "squirrelParentModeRelationships": relationshipSummary(
+                parents: parents, modes: modes
+            ),
+        ],
+        "intendedSources": [
+            "dvorakID": dvorakID,
+            "squirrelParentID": squirrelParentID,
+            "squirrelModeID": squirrelModeID,
+        ],
+        "documentedSelectionContract": [
+            "paramErr": paramErr,
+            "paramErrMeaning": "the source is not selectable",
+            "requiredTargetProperties": [
+                "kTISPropertyInputSourceIsSelectCapable == true",
+                "kTISPropertyInputSourceIsEnabled == true",
+            ],
+            "inputModeAdditionalRequirement": "an enabled parent input method",
+        ],
+        "prerequisites": [
+            "dvorak": prerequisites(
+                sources: sources, targetID: dvorakID, expectedType: layoutType
+            ),
+            "squirrelHans": prerequisites(
+                sources: sources, targetID: squirrelModeID, expectedType: modeType,
+                parentID: squirrelParentID
+            ),
+        ],
     ]
 }
 
@@ -81,6 +261,13 @@ private func writeJSON(_ value: Any, path: String) throws {
     try data.write(to: url, options: .atomic)
 }
 
+private func readJSON(path: String) -> [String: Any] {
+    guard let data = FileManager.default.contents(atPath: path),
+        let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return [:] }
+    return value
+}
+
 private func printJSON(_ value: Any) {
     guard let data = try? JSONSerialization.data(
         withJSONObject: value, options: [.prettyPrinted, .sortedKeys]
@@ -93,10 +280,10 @@ private func session(outputPath: String) throws {
     let consoleUser = SCDynamicStoreCopyConsoleUser(nil, nil, nil) as String?
     let value: [String: Any] = [
         "timestamp": timestamp(),
-        "runnerArchitecture": ProcessInfo.processInfo.environment["RUNNER_ARCH"] as Any,
+        "runnerArchitecture": jsonValue(ProcessInfo.processInfo.environment["RUNNER_ARCH"]),
         "processUser": NSUserName(),
         "uid": getuid(),
-        "consoleUser": consoleUser as Any,
+        "consoleUser": jsonValue(consoleUser),
         "hasAquaSessionDictionary": sessionDictionary != nil,
         "screenCount": NSScreen.screens.count,
         "accessibilityTrusted": AXIsProcessTrusted(),
@@ -106,137 +293,148 @@ private func session(outputPath: String) throws {
     printJSON(value)
 }
 
-private func snapshot(outputPath: String) throws {
-    let sources = allSources()
-    let value: [String: Any] = [
-        "timestamp": timestamp(),
-        "current": summary(currentSource()),
-        "sourceCount": sources.count,
-        "sources": sources.map(summary),
-    ]
+private func snapshot(label: String, outputPath: String) throws {
+    let value = snapshotValue(label: label)
     try writeJSON(value, path: outputPath)
     printJSON([
         "timestamp": value["timestamp"] as Any,
+        "label": label,
         "current": value["current"] as Any,
-        "sourceCount": sources.count,
-        "outputPath": outputPath,
+        "relevantSourceCount": value["relevantSourceCount"] as Any,
     ])
 }
 
-private func installAndSelect(
-    appPath: String,
-    bundleID: String,
-    modeID: String,
-    statePath: String,
-    resultPath: String
-) throws -> Int32 {
-    let prior = currentSource()
-    var state: [String: Any] = [
-        "schemaVersion": 1,
-        "createdAt": timestamp(),
-        "appPath": appPath,
-        "bundleID": bundleID,
-        "modeID": modeID,
-        "priorSource": summary(prior),
-        "registrationAttempted": false,
-        "selectionAttempted": false,
-    ]
-    try writeJSON(state, path: statePath)
-
-    state["registrationAttempted"] = true
-    try writeJSON(state, path: statePath)
-    let registrationStatus = TISRegisterInputSource(
-        URL(fileURLWithPath: appPath) as CFURL
-    )
-
-    var target: TISInputSource?
-    var discoveryAttempts = 0
+private func register(appPath: String, outputPath: String) throws -> Int32 {
+    let startedAt = timestamp()
+    let before = snapshotValue(label: "immediately-before-registration")
+    let status = TISRegisterInputSource(URL(fileURLWithPath: appPath) as CFURL)
+    let afterImmediate = snapshotValue(label: "immediately-after-registration")
+    var attempts = 0
     for attempt in 1...50 {
-        discoveryAttempts = attempt
-        target = source(bundleID: bundleID, modeID: modeID)
-        if target != nil { break }
+        attempts = attempt
+        let sources = allSources()
+        if exactMatches(in: sources, identifier: squirrelParentID, expectedType: parentType).count == 1,
+            exactMatches(in: sources, identifier: squirrelModeID, expectedType: modeType).count == 1
+        {
+            break
+        }
         Thread.sleep(forTimeInterval: 0.1)
     }
+    let result: [String: Any] = [
+        "schemaVersion": 2,
+        "operation": "TISRegisterInputSource",
+        "startedAt": startedAt,
+        "completedAt": timestamp(),
+        "appPath": appPath,
+        "status": status,
+        "before": before,
+        "afterImmediate": afterImmediate,
+        "refreshAttempts": attempts,
+        "after": snapshotValue(label: "after-registration-and-live-refresh"),
+    ]
+    try writeJSON(result, path: outputPath)
+    printJSON(result)
+    return 0
+}
 
-    let targetAtDiscovery = summary(target)
-    let expectedID = target.flatMap { stringProperty($0, sourceIDKey) }
-    let enableStatus = target.map(TISEnableInputSource)
-    state["selectionAttempted"] = target != nil
-    state["registrationStatus"] = registrationStatus
-    state["enableStatus"] = enableStatus as Any
-    state["expectedSelectedInputSourceID"] = expectedID as Any
-    try writeJSON(state, path: statePath)
-
-    var attempts: [[String: Any]] = []
-    var finalSelectionStatus: OSStatus?
-    var selected = currentSource()
-    if target != nil {
-        for attempt in 1...120 {
-            let refreshed = source(bundleID: bundleID, modeID: modeID)
-            let status = refreshed.map(TISSelectInputSource)
-            finalSelectionStatus = status
-            selected = currentSource()
-            let selectedID = selected.flatMap { stringProperty($0, sourceIDKey) }
-            attempts.append([
-                "attempt": attempt,
-                "timestamp": timestamp(),
-                "selectionStatus": status as Any,
-                "target": summary(refreshed),
-                "selectedSource": summary(selected),
-                "selectionVerified": expectedID != nil && selectedID == expectedID,
-            ])
-            let interim: [String: Any] = [
-                "timestamp": timestamp(),
-                "completed": false,
-                "appPath": appPath,
-                "bundleID": bundleID,
-                "modeID": modeID,
-                "priorSource": summary(prior),
-                "registrationStatus": registrationStatus,
-                "discoveryAttempts": discoveryAttempts,
-                "targetAtDiscovery": targetAtDiscovery,
-                "enableStatus": enableStatus as Any,
-                "expectedSelectedInputSourceID": expectedID as Any,
-                "selectionAttempts": attempts,
-                "selectedSource": summary(selected),
-            ]
-            try writeJSON(interim, path: resultPath)
-            if selectedID == expectedID { break }
-            Thread.sleep(forTimeInterval: 0.5)
+private func enable(
+    targetID: String, expectedType: String, outputPath: String
+) throws -> Int32 {
+    let startedAt = timestamp()
+    let before = snapshotValue(label: "immediately-before-enable-\(targetID)")
+    let matches = exactMatches(
+        in: allSources(), identifier: targetID, expectedType: expectedType
+    )
+    var status: OSStatus?
+    if matches.count == 1 {
+        status = TISEnableInputSource(matches[0])
+    }
+    let afterImmediate = snapshotValue(label: "immediately-after-enable-\(targetID)")
+    var refreshAttempts = 0
+    if status != nil {
+        for attempt in 1...30 {
+            refreshAttempts = attempt
+            let refreshed = exactMatches(
+                in: allSources(), identifier: targetID, expectedType: expectedType
+            )
+            if refreshed.count == 1,
+                boolProperty(refreshed[0], enabledKey) == true
+            {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
         }
     }
-
-    let selectedID = selected.flatMap { stringProperty($0, sourceIDKey) }
-    let selectionVerified = expectedID != nil && selectedID == expectedID
-    let success = registrationStatus == noErr
-        && target != nil
-        && enableStatus == noErr
-        && finalSelectionStatus == noErr
-        && selectionVerified
     let result: [String: Any] = [
-        "timestamp": timestamp(),
-        "completed": true,
-        "success": success,
-        "appPath": appPath,
-        "bundleID": bundleID,
-        "modeID": modeID,
-        "priorSource": summary(prior),
-        "registrationStatus": registrationStatus,
-        "discoveryAttempts": discoveryAttempts,
-        "targetAtDiscovery": targetAtDiscovery,
-        "enableStatus": enableStatus as Any,
-        "expectedSelectedInputSourceID": expectedID as Any,
-        "selectionAttempts": attempts,
-        "finalSelectionStatus": finalSelectionStatus as Any,
-        "selectedSource": summary(selected),
-        "selectionVerified": selectionVerified,
+        "schemaVersion": 2,
+        "operation": "TISEnableInputSource",
+        "startedAt": startedAt,
+        "completedAt": timestamp(),
+        "targetID": targetID,
+        "expectedType": expectedType,
+        "exactTargetCount": matches.count,
+        "operationPerformed": matches.count == 1,
+        "status": jsonValue(status),
+        "before": before,
+        "afterImmediate": afterImmediate,
+        "refreshAttempts": refreshAttempts,
+        "after": snapshotValue(label: "after-enable-and-live-refresh-\(targetID)"),
     ]
-    state["selectionVerified"] = selectionVerified
-    state["finalSelectionStatus"] = finalSelectionStatus as Any
-    try writeJSON(state, path: statePath)
-    try writeJSON(result, path: resultPath)
+    try writeJSON(result, path: outputPath)
     printJSON(result)
-    return success ? 0 : 2
+    return matches.count == 1 ? 0 : 2
+}
+
+private func select(
+    targetID: String, expectedType: String, parentID: String?, outputPath: String
+) throws -> Int32 {
+    let startedAt = timestamp()
+    let before = snapshotValue(label: "immediately-before-select-\(targetID)")
+    let sources = allSources()
+    let matches = exactMatches(
+        in: sources, identifier: targetID, expectedType: expectedType
+    )
+    let contractBefore = prerequisites(
+        sources: sources, targetID: targetID, expectedType: expectedType,
+        parentID: parentID
+    )
+    var status: OSStatus?
+    if matches.count == 1 {
+        status = TISSelectInputSource(matches[0])
+    }
+    let afterImmediate = snapshotValue(label: "immediately-after-select-\(targetID)")
+    var observationAttempts = 0
+    for attempt in 1...20 {
+        observationAttempts = attempt
+        if currentSource().flatMap({ stringProperty($0, sourceIDKey) }) == targetID {
+            break
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    let after = snapshotValue(label: "after-select-and-live-refresh-\(targetID)")
+    let selectedID = (after["current"] as? [String: Any])?["inputSourceID"] as? String
+    let result: [String: Any] = [
+        "schemaVersion": 2,
+        "operation": "TISSelectInputSource",
+        "startedAt": startedAt,
+        "completedAt": timestamp(),
+        "targetID": targetID,
+        "expectedType": expectedType,
+        "parentID": parentID ?? NSNull(),
+        "exactTargetCount": matches.count,
+        "operationPerformed": matches.count == 1,
+        "documentedPrerequisitesImmediatelyBefore": contractBefore,
+        "status": jsonValue(status),
+        "paramErrMeansSourceIsNotSelectable": status.map { $0 == paramErr } ?? false,
+        "before": before,
+        "afterImmediate": afterImmediate,
+        "observationAttempts": observationAttempts,
+        "after": after,
+        "selectionVerified": selectedID == targetID,
+    ]
+    try writeJSON(result, path: outputPath)
+    printJSON(result)
+    return matches.count == 1 ? 0 : 2
 }
 
 private func postKey(keyCode: CGKeyCode, label: String, outputPath: String) throws -> Int32 {
@@ -250,8 +448,12 @@ private func postKey(keyCode: CGKeyCode, label: String, outputPath: String) thro
         "posted": false,
     ]
     guard preflight, let eventSource = CGEventSource(stateID: .hidSystemState),
-        let down = CGEvent(keyboardEventSource: eventSource, virtualKey: keyCode, keyDown: true),
-        let up = CGEvent(keyboardEventSource: eventSource, virtualKey: keyCode, keyDown: false)
+        let down = CGEvent(
+            keyboardEventSource: eventSource, virtualKey: keyCode, keyDown: true
+        ),
+        let up = CGEvent(
+            keyboardEventSource: eventSource, virtualKey: keyCode, keyDown: false
+        )
     else {
         try writeJSON(value, path: outputPath)
         return 3
@@ -266,51 +468,79 @@ private func postKey(keyCode: CGKeyCode, label: String, outputPath: String) thro
     return 0
 }
 
-private func cleanupSources(bundleID: String, outputPath: String) throws -> Int32 {
-    let usID = "com.apple.keylayout.US"
-    let usSource = source(withID: usID)
-    let restoreEnableStatus = usSource.map(TISEnableInputSource)
-    let restoreSelectStatus = usSource.map(TISSelectInputSource)
-    var selected = currentSource()
-    var restoreAttempts = 0
-    for attempt in 1...50 {
-        restoreAttempts = attempt
-        selected = currentSource()
-        if selected.flatMap({ stringProperty($0, sourceIDKey) }) == usID { break }
-        Thread.sleep(forTimeInterval: 0.1)
+private func cleanupSources(statePath: String, outputPath: String) throws -> Int32 {
+    let state = readJSON(path: statePath)
+    let dvorakInitiallyEnabled = state["dvorakInitiallyEnabled"] as? Bool ?? false
+    let before = snapshotValue(label: "immediately-before-cleanup")
+
+    let usMatches = exactMatches(in: allSources(), identifier: usID, expectedType: layoutType)
+    let restoreEnableStatus = usMatches.count == 1 ? TISEnableInputSource(usMatches[0]) : nil
+    let refreshedUS = exactMatches(in: allSources(), identifier: usID, expectedType: layoutType)
+    let restoreSelectStatus = refreshedUS.count == 1 ? TISSelectInputSource(refreshedUS[0]) : nil
+    Thread.sleep(forTimeInterval: 0.3)
+
+    let squirrelTargets = allSources().filter {
+        stringProperty($0, bundleIDKey) == squirrelBundleID
+            && [modeType, parentType].contains(stringProperty($0, typeKey) ?? "")
+    }.sorted {
+        (stringProperty($0, typeKey) == modeType ? 0 : 1)
+            < (stringProperty($1, typeKey) == modeType ? 0 : 1)
+    }
+    let squirrelDisableResults = squirrelTargets.map { source -> [String: Any] in
+        let beforeSource = sourceSummary(source)
+        let status = TISDisableInputSource(source)
+        return ["sourceBefore": beforeSource, "disableStatus": status]
     }
 
-    let targets = allSources().filter {
-        stringProperty($0, bundleIDKey) == bundleID
+    var dvorakDisableStatus: OSStatus?
+    if !dvorakInitiallyEnabled {
+        let dvorakMatches = exactMatches(
+            in: allSources(), identifier: dvorakID, expectedType: layoutType
+        )
+        if dvorakMatches.count == 1 {
+            dvorakDisableStatus = TISDisableInputSource(dvorakMatches[0])
+        }
     }
-    let disableResults = targets.map { target -> [String: Any] in
-        let before = summary(target)
-        let status = TISDisableInputSource(target)
-        return ["sourceBefore": before, "disableStatus": status]
-    }
+    Thread.sleep(forTimeInterval: 0.3)
 
-    let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+    let running = NSRunningApplication.runningApplications(
+        withBundleIdentifier: squirrelBundleID
+    )
     let terminateRequested = running.map { $0.terminate() }.filter { $0 }.count
     Thread.sleep(forTimeInterval: 0.5)
-    let remaining = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+    let remaining = NSRunningApplication.runningApplications(
+        withBundleIdentifier: squirrelBundleID
+    )
     let forceTerminateRequested = remaining.map { $0.forceTerminate() }.filter { $0 }.count
     Thread.sleep(forTimeInterval: 0.5)
 
-    let current = currentSource()
-    let restored = current.flatMap { stringProperty($0, sourceIDKey) } == usID
-    let success = restoreSelectStatus == noErr && restored
+    let after = snapshotValue(label: "after-cleanup")
+    let currentID = (after["current"] as? [String: Any])?["inputSourceID"] as? String
+    let afterSources = after["sources"] as? [[String: Any]] ?? []
+    let squirrelDisabled = afterSources.filter {
+        ($0["bundleID"] as? String) == squirrelBundleID
+    }.allSatisfy { ($0["enabled"] as? Bool) == false }
+    let dvorakRestored = dvorakInitiallyEnabled
+        || afterSources.first { ($0["inputSourceID"] as? String) == dvorakID }?["enabled"] as? Bool == false
+    let success = restoreSelectStatus == noErr
+        && currentID == usID
+        && squirrelDisabled
+        && dvorakRestored
     let value: [String: Any] = [
         "timestamp": timestamp(),
         "success": success,
-        "bundleID": bundleID,
-        "restoreEnableStatus": restoreEnableStatus as Any,
-        "restoreSelectStatus": restoreSelectStatus as Any,
-        "restoreAttempts": restoreAttempts,
-        "selectedSourceAfter": summary(current),
-        "targetCount": targets.count,
-        "disableResults": disableResults,
+        "dvorakInitiallyEnabled": dvorakInitiallyEnabled,
+        "restoreEnableStatus": jsonValue(restoreEnableStatus),
+        "restoreSelectStatus": jsonValue(restoreSelectStatus),
+        "squirrelDisableResults": squirrelDisableResults,
+        "dvorakDisableStatus": jsonValue(dvorakDisableStatus),
         "terminateRequested": terminateRequested,
         "forceTerminateRequested": forceTerminateRequested,
+        "before": before,
+        "after": after,
+        "restoredUS": currentID == usID,
+        "squirrelSourcesDisabled": squirrelDisabled,
+        "dvorakStateRestored": dvorakRestored,
     ]
     try writeJSON(value, path: outputPath)
     printJSON(value)
@@ -319,7 +549,7 @@ private func cleanupSources(bundleID: String, outputPath: String) throws -> Int3
 
 private func usage() -> Never {
     fputs(
-        "usage: ThirdPartySourceHelper session OUT | sources OUT | install-select APP BUNDLE MODE STATE RESULT | post-key KEYCODE LABEL OUT | cleanup-sources BUNDLE OUT\n",
+        "usage: ThirdPartySourceHelper session OUT | sources LABEL OUT | register APP OUT | enable ID TYPE OUT | select ID TYPE PARENT_OR_DASH OUT | post-key KEYCODE LABEL OUT | cleanup-sources STATE OUT\n",
         stderr
     )
     exit(64)
@@ -334,13 +564,20 @@ do {
     case "session" where arguments.count == 3:
         try session(outputPath: arguments[2])
         status = 0
-    case "sources" where arguments.count == 3:
-        try snapshot(outputPath: arguments[2])
+    case "sources" where arguments.count == 4:
+        try snapshot(label: arguments[2], outputPath: arguments[3])
         status = 0
-    case "install-select" where arguments.count == 7:
-        status = try installAndSelect(
-            appPath: arguments[2], bundleID: arguments[3], modeID: arguments[4],
-            statePath: arguments[5], resultPath: arguments[6]
+    case "register" where arguments.count == 4:
+        status = try register(appPath: arguments[2], outputPath: arguments[3])
+    case "enable" where arguments.count == 5:
+        status = try enable(
+            targetID: arguments[2], expectedType: arguments[3], outputPath: arguments[4]
+        )
+    case "select" where arguments.count == 6:
+        status = try select(
+            targetID: arguments[2], expectedType: arguments[3],
+            parentID: arguments[4] == "-" ? nil : arguments[4],
+            outputPath: arguments[5]
         )
     case "post-key" where arguments.count == 5:
         guard let keyCode = UInt16(arguments[2]) else { usage() }
@@ -348,7 +585,7 @@ do {
             keyCode: keyCode, label: arguments[3], outputPath: arguments[4]
         )
     case "cleanup-sources" where arguments.count == 4:
-        status = try cleanupSources(bundleID: arguments[2], outputPath: arguments[3])
+        status = try cleanupSources(statePath: arguments[2], outputPath: arguments[3])
     default:
         usage()
     }

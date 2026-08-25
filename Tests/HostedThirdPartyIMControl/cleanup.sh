@@ -9,12 +9,10 @@ STATE="$EVIDENCE/installation-state.json"
 SOURCE_RESULT="$EVIDENCE/source-cleanup.json"
 FILE_RESULT="$EVIDENCE/file-cleanup.json"
 RESULT="$EVIDENCE/cleanup.json"
-BUNDLE_ID="im.rime.inputmethod.Squirrel"
-
 mkdir -p "$EVIDENCE"
 source_status=0
 if [[ -x "$HELPER" && -f "$STATE" ]]; then
-    "$HELPER" cleanup-sources "$BUNDLE_ID" "$SOURCE_RESULT" || source_status=$?
+    "$HELPER" cleanup-sources "$STATE" "$SOURCE_RESULT" || source_status=$?
 else
     python3 - "$STATE" "$SOURCE_RESULT" <<'PY'
 import datetime as dt
@@ -113,7 +111,8 @@ output.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 PY
 
 if [[ -x "$HELPER" ]]; then
-    "$HELPER" sources "$EVIDENCE/input-sources-after-cleanup.json" \
+    "$HELPER" sources "after-cleanup" \
+        "$EVIDENCE/input-sources-after-cleanup.json" \
         >"$EVIDENCE/input-sources-after-cleanup-command.log" 2>&1 || true
 fi
 

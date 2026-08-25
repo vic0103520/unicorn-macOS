@@ -11,12 +11,9 @@ PACKAGE="$BUILD_ROOT/Squirrel-1.1.2.pkg"
 EXPANDED="$BUILD_ROOT/expanded"
 INSTALLED_APP="$HOME/Library/Input Methods/Squirrel.app"
 SQUIRREL="$INSTALLED_APP/Contents/MacOS/Squirrel"
-BUNDLE_ID="im.rime.inputmethod.Squirrel"
-MODE_ID="im.rime.inputmethod.Squirrel.Hans"
 ASSET_URL="https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg"
 ASSET_SHA256="614746013212937623d5bbab9901e9c43d1ec937aa32307d6b6092a05e308287"
 PRODUCER_EXIT="$EVIDENCE/producer-exit-code.txt"
-SELECTION_PID=""
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$EVIDENCE" "$BIN" "$CLIENT_APP/Contents/MacOS"
@@ -66,7 +63,8 @@ collect_evidence() {
     set +e
     record_phase "evidence-collection" "started"
     if [[ -x "$HELPER" ]]; then
-        "$HELPER" sources "$EVIDENCE/input-sources-final-before-cleanup.json" \
+        "$HELPER" sources "final-evidence-collection-before-cleanup" \
+            "$EVIDENCE/input-sources-final-before-cleanup.json" \
             >"$EVIDENCE/input-sources-final-command.log" 2>&1
     fi
     ps -axo pid=,ppid=,user=,comm=,args= >"$EVIDENCE/processes-final.txt" 2>&1
@@ -89,10 +87,6 @@ finish() {
     local status=$?
     trap - EXIT INT TERM
     set +e
-    if [[ -n "$SELECTION_PID" ]] && kill -0 "$SELECTION_PID" 2>/dev/null; then
-        kill "$SELECTION_PID" 2>/dev/null
-        wait "$SELECTION_PID"
-    fi
     printf '%s\n' "$status" >"$PRODUCER_EXIT"
     collect_evidence
     "$ROOT/Tests/HostedThirdPartyIMControl/cleanup.sh" \
@@ -251,7 +245,8 @@ with log_path.open("w") as log:
 if completed.returncode != 0:
     raise SystemExit(f"Squirrel --build returned {completed.returncode}")
 PY
-"$HELPER" sources "$EVIDENCE/input-sources-after-build-before-registration.json" \
+"$HELPER" sources "after-build-before-registration" \
+    "$EVIDENCE/input-sources-after-build-before-registration.json" \
     >"$EVIDENCE/input-sources-after-build-command.log" 2>&1
 python3 - "$EVIDENCE/process-after-build-before-registration.json" <<'PY'
 import datetime as dt
@@ -296,24 +291,6 @@ value = json.loads(path.read_text())
 value["selectionStarted"] = True
 path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 PY
-"$HELPER" install-select \
-    "$INSTALLED_APP" \
-    "$BUNDLE_ID" \
-    "$MODE_ID" \
-    "$EVIDENCE/input-source-state.json" \
-    "$EVIDENCE/input-source-selection.json" \
-    >"$EVIDENCE/input-source-selection-command.log" 2>&1 &
-SELECTION_PID=$!
-
 python3 "$ROOT/Tests/HostedThirdPartyIMControl/control.py" \
-    run "$EVIDENCE" "$HELPER" "$CLIENT_APP"
-
-set +e
-wait "$SELECTION_PID"
-selection_status=$?
-set -e
-SELECTION_PID=""
-printf '%s\n' "$selection_status" >"$EVIDENCE/input-source-selection-exit-code.txt"
-python3 "$ROOT/Tests/HostedThirdPartyIMControl/control.py" \
-    incorporate-selection "$EVIDENCE"
+    run "$EVIDENCE" "$HELPER" "$CLIENT_APP" "$INSTALLED_APP"
 record_phase "register-approve-select-and-compose" "completed"
