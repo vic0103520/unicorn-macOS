@@ -321,6 +321,33 @@ def wait_for_server(driver: WebDriver, timeout: int = 45) -> dict[str, Any]:
     return {"ready": False, "error": last_error, "timestamp": timestamp()}
 
 
+def create_bundle_session(
+    driver: WebDriver,
+    bundle_id: str,
+    extra_capabilities: dict[str, Any] | None = None,
+) -> tuple[str, Any]:
+    capabilities: dict[str, Any] = {
+        "platformName": "mac",
+        "appium:automationName": "mac2",
+        "appium:bundleId": bundle_id,
+        "appium:showServerLogs": True,
+        "appium:serverStartupTimeout": 120_000,
+    }
+    capabilities.update(extra_capabilities or {})
+    response = driver.request(
+        "POST",
+        "/session",
+        {"capabilities": {"alwaysMatch": capabilities, "firstMatch": [{}]}},
+        timeout=150,
+    )
+    session_id = response.get("sessionId")
+    if not session_id and isinstance(response.get("value"), dict):
+        session_id = response["value"].get("sessionId")
+    if not session_id:
+        raise WebDriverError("POST", "/session", 200, response)
+    return session_id, response
+
+
 def create_session(
     driver: WebDriver,
     client_app: pathlib.Path,
@@ -339,38 +366,46 @@ def create_session(
         "appium:showServerLogs": True,
         "appium:serverStartupTimeout": 120_000,
     }
-    response = driver.request(
-        "POST",
-        "/session",
-        {"capabilities": {"alwaysMatch": capabilities, "firstMatch": [{}]}},
-        timeout=150,
+    return create_bundle_session(
+        driver,
+        "dev.unicorn.hosted-imk-probe.client",
+        {key: value for key, value in capabilities.items() if key != "appium:bundleId"},
     )
-    session_id = response.get("sessionId")
-    if not session_id and isinstance(response.get("value"), dict):
-        session_id = response["value"].get("sessionId")
-    if not session_id:
-        raise WebDriverError("POST", "/session", 200, response)
-    return session_id, response
 
 
-def find_text_view(driver: WebDriver, session_id: str, timeout: int = 30) -> str:
+def find_element(
+    driver: WebDriver,
+    session_id: str,
+    locators: list[tuple[str, str]],
+    timeout: int = 15,
+) -> str:
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
-        try:
-            response = driver.request(
-                "POST",
-                f"/session/{session_id}/element",
-                {"using": "accessibility id", "value": TEXT_VIEW_ID},
-            )
-            value = response.get("value", {})
-            element_id = value.get(ELEMENT_KEY) or value.get("ELEMENT")
-            if element_id:
-                return element_id
-        except WebDriverError as error:
-            last_error = error
+        for strategy, value in locators:
+            try:
+                response = driver.request(
+                    "POST",
+                    f"/session/{session_id}/element",
+                    {"using": strategy, "value": value},
+                )
+                element = response.get("value", {})
+                element_id = element.get(ELEMENT_KEY) or element.get("ELEMENT")
+                if element_id:
+                    return element_id
+            except WebDriverError as error:
+                last_error = error
         time.sleep(0.5)
-    raise RuntimeError(f"Text view was not found through accessibility: {last_error}")
+    raise RuntimeError(f"Element was not found through accessibility: {last_error}")
+
+
+def find_text_view(driver: WebDriver, session_id: str, timeout: int = 30) -> str:
+    return find_element(
+        driver,
+        session_id,
+        [("accessibility id", TEXT_VIEW_ID)],
+        timeout=timeout,
+    )
 
 
 def attribute(driver: WebDriver, session_id: str, element_id: str, name: str) -> Any:
@@ -531,11 +566,85 @@ def native_source_snapshot(helper: pathlib.Path, path: pathlib.Path) -> dict[str
     return {"command": result, "data": load_json(path, {})}
 
 
+def source_is_selected(snapshot: dict[str, Any], bundle_id: str) -> bool:
+    current = snapshot.get("data", {}).get("current", {})
+    return current.get("bundleID") == bundle_id
+
+
+def attempt_input_source_consent(
+    driver: WebDriver,
+    helper: pathlib.Path,
+    evidence: pathlib.Path,
+    bundle_id: str,
+    mode_id: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"attempted": True, "startedAt": timestamp()}
+    session_id: str | None = None
+    try:
+        session_id, response = create_bundle_session(
+            driver,
+            "com.apple.systempreferences",
+            {"appium:noReset": True},
+        )
+        result["session"] = {"created": True, "response": response}
+        result["sourceBefore"] = save_source(
+            driver, session_id, evidence / "input-source-consent-source.xml"
+        )
+        result["screenshotBefore"] = save_screenshot(
+            driver, session_id, evidence / "input-source-consent-before.png"
+        )
+        allow_element = find_element(
+            driver,
+            session_id,
+            [
+                ("accessibility id", "Allow"),
+                (
+                    "predicate string",
+                    "name == 'Allow' OR label == 'Allow' OR value == 'Allow'",
+                ),
+            ],
+            timeout=15,
+        )
+        result["allowElement"] = element_snapshot(driver, session_id, allow_element)
+        driver.request(
+            "POST", f"/session/{session_id}/element/{allow_element}/click", {}
+        )
+        result["allowClicked"] = True
+        time.sleep(1.0)
+        result["screenshotAfter"] = save_screenshot(
+            driver, session_id, evidence / "input-source-consent-after.png"
+        )
+    except Exception as error:
+        result["error"] = {
+            "type": type(error).__name__,
+            "message": bounded(str(error)),
+        }
+    finally:
+        if session_id:
+            try:
+                driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                result.setdefault("session", {})["deleted"] = True
+            except Exception as error:
+                result.setdefault("session", {})["deleteError"] = bounded(str(error))
+
+    retry_path = evidence / "input-source-selection-after-consent.json"
+    retry = run_command(
+        [str(helper), "select", bundle_id, mode_id, str(retry_path)], timeout=30
+    )
+    result["selectionRetry"] = {
+        "command": retry,
+        "data": load_json(retry_path, {}),
+    }
+    result["completedAt"] = timestamp()
+    return result
+
+
 def run_probe(
     evidence: pathlib.Path,
     client_app: pathlib.Path,
     helper: pathlib.Path,
     probe_bundle_id: str,
+    probe_mode_id: str,
     probe_executable_name: str,
 ) -> int:
     transcript = evidence / "webdriver-transcript.jsonl"
@@ -551,6 +660,7 @@ def run_probe(
         "accessibility": {},
         "keyDelivery": {"driver": "appium-mac2", "keys": []},
         "fallback": {"attempted": False, "reason": "Mac2 did not inject literal text"},
+        "inputSourceConsent": {"attempted": False},
         "screenshots": [],
     }
     result_status = 1
@@ -573,6 +683,27 @@ def run_probe(
         if not report["server"]["readiness"]["ready"]:
             classification = "appium_server_unavailable"
             raise RuntimeError("Appium server did not become ready")
+
+        initial_source = native_source_snapshot(
+            helper, evidence / "input-sources-before-consent.json"
+        )
+        report["inputSourceBeforeConsent"] = initial_source
+        if not source_is_selected(initial_source, probe_bundle_id):
+            report["inputSourceConsent"] = attempt_input_source_consent(
+                driver,
+                helper,
+                evidence,
+                probe_bundle_id,
+                probe_mode_id,
+            )
+        source_after_consent = native_source_snapshot(
+            helper, evidence / "input-sources-after-consent.json"
+        )
+        report["inputSourceAfterConsent"] = source_after_consent
+        input_source_ready = source_is_selected(
+            source_after_consent, probe_bundle_id
+        )
+        report["inputSourceSelectionVerified"] = input_source_ready
 
         current_diagnostics = evidence / "client-current.json"
         timeline = evidence / "client-timeline.jsonl"
@@ -734,6 +865,18 @@ def run_probe(
             classification = "lambda_assertion_failed_after_imk_server_startup"
         else:
             classification = "unicorn_imk_server_not_started"
+
+        if not input_source_ready:
+            passed = False
+            result_status = 1
+            consent = report.get("inputSourceConsent", {})
+            retry = consent.get("selectionRetry", {}).get("data", {})
+            if consent.get("error"):
+                classification = "input_source_consent_not_automatable_with_mac2"
+            elif consent.get("allowClicked") and retry.get("selectionStatus") != 0:
+                classification = "input_source_selection_denied_after_allow_click"
+            else:
+                classification = "input_source_selection_blocked"
     except Exception as error:
         report["error"] = {
             "type": type(error).__name__,
@@ -858,6 +1001,7 @@ def main() -> int:
     run_parser.add_argument("client_app", type=pathlib.Path)
     run_parser.add_argument("helper", type=pathlib.Path)
     run_parser.add_argument("probe_bundle_id")
+    run_parser.add_argument("probe_mode_id")
     run_parser.add_argument("probe_executable_name")
 
     finalize_parser = subparsers.add_parser("finalize")
@@ -885,6 +1029,7 @@ def main() -> int:
             arguments.client_app,
             arguments.helper,
             arguments.probe_bundle_id,
+            arguments.probe_mode_id,
             arguments.probe_executable_name,
         )
     if arguments.command == "finalize":

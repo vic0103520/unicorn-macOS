@@ -276,13 +276,19 @@ if [[ -e "$INSTALLED_APP" ]]; then
 fi
 mkdir -p "$(dirname "$INSTALLED_APP")"
 ditto "$BUILT_APP" "$INSTALLED_APP"
+set +e
 "$HELPER" install-select \
     "$INSTALLED_APP" \
     "$PROBE_BUNDLE_ID" \
     "$PROBE_MODE_ID" \
     "$EVIDENCE/input-source-state.json" \
     "$EVIDENCE/input-source-selection.json"
-record_phase "register-and-select-input-source" "completed"
+selection_status=$?
+set -e
+printf '%s\n' "$selection_status" >"$EVIDENCE/input-source-selection-exit-code.txt"
+record_phase \
+    "register-and-select-input-source" \
+    "completed-with-status-$selection_status"
 
 record_phase "appium-inputmethodkit-probe" "started"
 python3 "$ROOT/Tests/HostedIMKProbe/probe.py" run \
@@ -290,5 +296,6 @@ python3 "$ROOT/Tests/HostedIMKProbe/probe.py" run \
     "$CLIENT_APP" \
     "$HELPER" \
     "$PROBE_BUNDLE_ID" \
+    "$PROBE_MODE_ID" \
     "$PROBE_EXECUTABLE"
 record_phase "appium-inputmethodkit-probe" "completed"

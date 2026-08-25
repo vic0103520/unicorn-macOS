@@ -11,17 +11,10 @@ private let localizedNameKey = kTISPropertyLocalizedName!
 private let categoryKey = kTISPropertyInputSourceCategory!
 private let typeKey = kTISPropertyInputSourceType!
 private let inputModeIDKey = kTISPropertyInputModeID!
-private let languagesKey = kTISPropertyInputSourceLanguages!
 
 private func stringProperty(_ source: TISInputSource, _ key: CFString) -> String? {
     guard let pointer = TISGetInputSourceProperty(source, key) else { return nil }
     return Unmanaged<CFString>.fromOpaque(pointer).takeUnretainedValue() as String
-}
-
-private func stringArrayProperty(_ source: TISInputSource, _ key: CFString) -> [String] {
-    guard let pointer = TISGetInputSourceProperty(source, key) else { return [] }
-    let value = Unmanaged<CFArray>.fromOpaque(pointer).takeUnretainedValue()
-    return (value as? [String]) ?? []
 }
 
 private func allInputSources() -> [TISInputSource] {
@@ -58,7 +51,6 @@ private func sourceSummary(_ source: TISInputSource?) -> [String: Any] {
         "localizedName": stringProperty(source, localizedNameKey) as Any,
         "category": stringProperty(source, categoryKey) as Any,
         "type": stringProperty(source, typeKey) as Any,
-        "languages": stringArrayProperty(source, languagesKey),
     ]
 }
 
@@ -234,6 +226,49 @@ private func runInstallAndSelect(
     return success ? 0 : 2
 }
 
+private func runSelect(
+    bundleID: String,
+    modeID: String,
+    resultPath: String
+) throws -> Int32 {
+    guard let probeSource = source(matchingBundleID: bundleID, modeID: modeID) else {
+        let result: [String: Any] = [
+            "timestamp": isoTimestamp(),
+            "success": false,
+            "error": "Registered input source was not found",
+        ]
+        try writeJSON(result, to: resultPath)
+        printJSON(result)
+        return 2
+    }
+
+    let enableStatus = TISEnableInputSource(probeSource)
+    let selectionStatus = TISSelectInputSource(probeSource)
+    let expectedSelectedID = stringProperty(probeSource, inputSourceIDKey)
+    var selected = currentKeyboardInputSource()
+    for _ in 0..<50 {
+        let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
+        if selectedID == expectedSelectedID { break }
+        Thread.sleep(forTimeInterval: 0.1)
+        selected = currentKeyboardInputSource()
+    }
+    let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
+    let verified = expectedSelectedID != nil && selectedID == expectedSelectedID
+    let success = enableStatus == noErr && selectionStatus == noErr && verified
+    let result: [String: Any] = [
+        "timestamp": isoTimestamp(),
+        "success": success,
+        "probeSource": sourceSummary(probeSource),
+        "enableStatus": enableStatus,
+        "selectionStatus": selectionStatus,
+        "selectedSource": sourceSummary(selected),
+        "selectionVerified": verified,
+    ]
+    try writeJSON(result, to: resultPath)
+    printJSON(result)
+    return success ? 0 : 2
+}
+
 private func runCleanup(
     statePath: String,
     bundleID: String,
@@ -371,7 +406,7 @@ private func runCGEventKeys(outputPath: String) throws -> Int32 {
 
 private func usage() -> Never {
     fputs(
-        "usage: ProbeHelper session OUTPUT | sources OUTPUT | install-select APP BUNDLE MODE STATE RESULT | cleanup STATE BUNDLE MODE APP RESULT | cg-keys OUTPUT\n",
+        "usage: ProbeHelper session OUTPUT | sources OUTPUT | install-select APP BUNDLE MODE STATE RESULT | select BUNDLE MODE RESULT | cleanup STATE BUNDLE MODE APP RESULT | cg-keys OUTPUT\n",
         stderr
     )
     exit(64)
@@ -393,6 +428,10 @@ do {
         status = try runInstallAndSelect(
             appPath: arguments[2], bundleID: arguments[3], modeID: arguments[4],
             statePath: arguments[5], resultPath: arguments[6]
+        )
+    case "select" where arguments.count == 5:
+        status = try runSelect(
+            bundleID: arguments[2], modeID: arguments[3], resultPath: arguments[4]
         )
     case "cleanup" where arguments.count == 7:
         status = try runCleanup(
