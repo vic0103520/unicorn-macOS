@@ -192,9 +192,11 @@ private func runInstallAndSelect(
         stringProperty($0, inputSourceIDKey)
     }
     var selected = currentKeyboardInputSource()
-    if let probeSource {
+    if probeSource != nil {
         for _ in 0..<120 {
-            selectionStatus = TISSelectInputSource(probeSource)
+            if let refreshedSource = source(matchingBundleID: bundleID, modeID: modeID) {
+                selectionStatus = TISSelectInputSource(refreshedSource)
+            }
             selected = currentKeyboardInputSource()
             let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
             if selectedID == expectedSelectedID { break }
