@@ -437,6 +437,260 @@ private func select(
     return matches.count == 1 ? 0 : 2
 }
 
+private func axValue(_ element: AXUIElement, attribute: CFString) -> CFTypeRef? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else {
+        return nil
+    }
+    return value
+}
+
+private func axString(_ element: AXUIElement, attribute: CFString) -> String? {
+    axValue(element, attribute: attribute) as? String
+}
+
+private func axBool(_ element: AXUIElement, attribute: CFString) -> Bool? {
+    guard let number = axValue(element, attribute: attribute) as? NSNumber else {
+        return nil
+    }
+    return number.boolValue
+}
+
+private func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+    guard let values = axValue(element, attribute: kAXChildrenAttribute as CFString)
+        as? [AXUIElement]
+    else { return [] }
+    return values
+}
+
+private func axSummary(
+    _ element: AXUIElement, bundleID: String
+) -> [String: Any] {
+    var actions: CFArray?
+    let actionStatus = AXUIElementCopyActionNames(element, &actions)
+    return [
+        "bundleID": bundleID,
+        "role": jsonValue(axString(element, attribute: kAXRoleAttribute as CFString)),
+        "subrole": jsonValue(axString(element, attribute: kAXSubroleAttribute as CFString)),
+        "identifier": jsonValue(
+            axString(element, attribute: kAXIdentifierAttribute as CFString)
+        ),
+        "title": jsonValue(axString(element, attribute: kAXTitleAttribute as CFString)),
+        "description": jsonValue(
+            axString(element, attribute: kAXDescriptionAttribute as CFString)
+        ),
+        "value": jsonValue(axString(element, attribute: kAXValueAttribute as CFString)),
+        "enabled": jsonValue(axBool(element, attribute: kAXEnabledAttribute as CFString)),
+        "actionCopyStatus": actionStatus.rawValue,
+        "actions": (actions as? [String]) ?? [],
+    ]
+}
+
+private struct AXNode {
+    let element: AXUIElement
+    let bundleID: String
+}
+
+private func appendAXTree(
+    element: AXUIElement, bundleID: String, depth: Int,
+    maximumDepth: Int, maximumCount: Int, nodes: inout [AXNode]
+) {
+    guard depth <= maximumDepth, nodes.count < maximumCount else { return }
+    nodes.append(AXNode(element: element, bundleID: bundleID))
+    for child in axChildren(element) where nodes.count < maximumCount {
+        appendAXTree(
+            element: child, bundleID: bundleID, depth: depth + 1,
+            maximumDepth: maximumDepth, maximumCount: maximumCount, nodes: &nodes
+        )
+    }
+}
+
+private func inputMenuAXNodes() -> (nodes: [AXNode], applications: [[String: Any]]) {
+    let bundleIDs = [
+        "com.apple.TextInputMenuAgent",
+        "com.apple.systemuiserver",
+        "com.apple.controlcenter",
+    ]
+    var nodes: [AXNode] = []
+    var applications: [[String: Any]] = []
+    for bundleID in bundleIDs {
+        let running = NSRunningApplication.runningApplications(
+            withBundleIdentifier: bundleID
+        )
+        applications.append([
+            "bundleID": bundleID,
+            "runningApplicationCount": running.count,
+            "processIdentifiers": running.map { $0.processIdentifier },
+        ])
+        for application in running {
+            let root = AXUIElementCreateApplication(application.processIdentifier)
+            if let menuBarValue = axValue(
+                root, attribute: kAXMenuBarAttribute as CFString
+            ) {
+                appendAXTree(
+                    element: menuBarValue as! AXUIElement, bundleID: bundleID, depth: 0,
+                    maximumDepth: 8, maximumCount: 1_000, nodes: &nodes
+                )
+            } else {
+                appendAXTree(
+                    element: root, bundleID: bundleID, depth: 0,
+                    maximumDepth: 8, maximumCount: 1_000, nodes: &nodes
+                )
+            }
+        }
+    }
+    return (nodes, applications)
+}
+
+private func axSemanticValues(_ element: AXUIElement) -> [String] {
+    [
+        axString(element, attribute: kAXIdentifierAttribute as CFString),
+        axString(element, attribute: kAXTitleAttribute as CFString),
+        axString(element, attribute: kAXDescriptionAttribute as CFString),
+        axString(element, attribute: kAXValueAttribute as CFString),
+    ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+}
+
+private func uniqueAXCandidate(
+    nodes: [AXNode], role: String, exactValues: [String]
+) -> (node: AXNode?, rule: String) {
+    let roleNodes = nodes.filter {
+        axString($0.element, attribute: kAXRoleAttribute as CFString) == role
+    }
+    for expected in exactValues {
+        let matches = roleNodes.filter { node in
+            axSemanticValues(node.element).contains {
+                $0.compare(expected, options: [.caseInsensitive]) == .orderedSame
+            }
+        }
+        if matches.count == 1 {
+            return (matches[0], "unique-exact-semantic-value:\(expected)")
+        }
+        if matches.count > 1 {
+            return (nil, "ambiguous-exact-semantic-value:\(expected):\(matches.count)")
+        }
+    }
+    return (nil, "no-exact-semantic-value-match")
+}
+
+private func menuSelect(
+    targetID: String, targetName: String, currentName: String, outputPath: String
+) throws -> Int32 {
+    let startedAt = timestamp()
+    var result: [String: Any] = [
+        "schemaVersion": 2,
+        "operation": "semantic Accessibility selection through the macOS input menu",
+        "attempted": true,
+        "startedAt": startedAt,
+        "targetID": targetID,
+        "targetName": targetName,
+        "currentName": currentName,
+        "accessibilityTrusted": AXIsProcessTrusted(),
+        "usesOCRPixelsOrCoordinates": false,
+        "targetPressed": false,
+        "selectionVerified": false,
+    ]
+
+    let initial = inputMenuAXNodes()
+    result["applications"] = initial.applications
+    let menuBarNodes = initial.nodes.filter {
+        axString($0.element, attribute: kAXRoleAttribute as CFString)
+            == (kAXMenuBarItemRole as String)
+    }
+    result["menuBarCandidates"] = menuBarNodes.map {
+        axSummary($0.element, bundleID: $0.bundleID)
+    }
+    let inputMenu = uniqueAXCandidate(
+        nodes: menuBarNodes,
+        role: kAXMenuBarItemRole as String,
+        exactValues: [
+            "com.apple.menuextra.textinput",
+            "com.apple.TextInputMenuAgent",
+            "Input menu",
+            "Text Input menu",
+            currentName,
+        ]
+    )
+    result["menuBarMatchRule"] = inputMenu.rule
+    guard let inputMenuNode = inputMenu.node else {
+        result["completedAt"] = timestamp()
+        result["error"] = "Input menu bar item did not have one exact semantic match"
+        result["sourceAfterIncompleteAttempt"] = snapshotValue(
+            label: "after-incomplete-menu-selection-\(targetID)"
+        )
+        try writeJSON(result, path: outputPath)
+        printJSON(result)
+        return 0
+    }
+
+    let openStatus = AXUIElementPerformAction(
+        inputMenuNode.element, kAXPressAction as CFString
+    )
+    result["inputMenuOpenActionStatus"] = openStatus.rawValue
+    guard openStatus == .success else {
+        result["completedAt"] = timestamp()
+        result["error"] = "Accessibility press on the exact input menu bar item failed"
+        result["sourceAfterIncompleteAttempt"] = snapshotValue(
+            label: "after-incomplete-menu-selection-\(targetID)"
+        )
+        try writeJSON(result, path: outputPath)
+        printJSON(result)
+        return 0
+    }
+    Thread.sleep(forTimeInterval: 0.5)
+
+    let opened = inputMenuAXNodes()
+    let menuItemNodes = opened.nodes.filter {
+        axString($0.element, attribute: kAXRoleAttribute as CFString)
+            == (kAXMenuItemRole as String)
+    }
+    result["menuItemCandidates"] = menuItemNodes.map {
+        axSummary($0.element, bundleID: $0.bundleID)
+    }
+    let target = uniqueAXCandidate(
+        nodes: menuItemNodes,
+        role: kAXMenuItemRole as String,
+        exactValues: [targetName]
+    )
+    result["targetMatchRule"] = target.rule
+    guard let targetNode = target.node,
+        axBool(targetNode.element, attribute: kAXEnabledAttribute as CFString) == true
+    else {
+        result["completedAt"] = timestamp()
+        result["error"] = "Intended source did not have one exact enabled semantic menu item"
+        result["sourceAfterIncompleteAttempt"] = snapshotValue(
+            label: "after-incomplete-menu-selection-\(targetID)"
+        )
+        try writeJSON(result, path: outputPath)
+        printJSON(result)
+        return 0
+    }
+
+    result["targetElement"] = axSummary(
+        targetNode.element, bundleID: targetNode.bundleID
+    )
+    result["sourceImmediatelyBeforeTargetPress"] = snapshotValue(
+        label: "immediately-before-menu-selection-\(targetID)"
+    )
+    result["targetPressStartedAt"] = timestamp()
+    let targetStatus = AXUIElementPerformAction(
+        targetNode.element, kAXPressAction as CFString
+    )
+    result["targetPressStatus"] = targetStatus.rawValue
+    result["targetPressed"] = targetStatus == .success
+    result["targetPressCompletedAt"] = timestamp()
+    result["sourceImmediatelyAfterTargetPress"] = snapshotValue(
+        label: "immediately-after-menu-selection-\(targetID)"
+    )
+    let selectedID = currentSource().flatMap { stringProperty($0, sourceIDKey) }
+    result["selectionVerified"] = selectedID == targetID
+    result["completedAt"] = timestamp()
+    try writeJSON(result, path: outputPath)
+    printJSON(result)
+    return 0
+}
+
 private func postKey(keyCode: CGKeyCode, label: String, outputPath: String) throws -> Int32 {
     let preflight = CGPreflightPostEventAccess()
     var value: [String: Any] = [
@@ -492,6 +746,23 @@ private func cleanupSources(statePath: String, outputPath: String) throws -> Int
         return ["sourceBefore": beforeSource, "disableStatus": status]
     }
 
+    var disableRefreshAttempts = 0
+    for attempt in 1...50 {
+        disableRefreshAttempts = attempt
+        let refreshedSquirrel = allSources().filter {
+            stringProperty($0, bundleIDKey) == squirrelBundleID
+                && [modeType, parentType].contains(
+                    stringProperty($0, typeKey) ?? ""
+                )
+        }
+        if refreshedSquirrel.allSatisfy({
+            boolProperty($0, enabledKey) == false
+        }) {
+            break
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+
     var dvorakDisableStatus: OSStatus?
     if !dvorakInitiallyEnabled {
         let dvorakMatches = exactMatches(
@@ -533,6 +804,7 @@ private func cleanupSources(statePath: String, outputPath: String) throws -> Int
         "restoreEnableStatus": jsonValue(restoreEnableStatus),
         "restoreSelectStatus": jsonValue(restoreSelectStatus),
         "squirrelDisableResults": squirrelDisableResults,
+        "squirrelDisableRefreshAttempts": disableRefreshAttempts,
         "dvorakDisableStatus": jsonValue(dvorakDisableStatus),
         "terminateRequested": terminateRequested,
         "forceTerminateRequested": forceTerminateRequested,
@@ -549,7 +821,7 @@ private func cleanupSources(statePath: String, outputPath: String) throws -> Int
 
 private func usage() -> Never {
     fputs(
-        "usage: ThirdPartySourceHelper session OUT | sources LABEL OUT | register APP OUT | enable ID TYPE OUT | select ID TYPE PARENT_OR_DASH OUT | post-key KEYCODE LABEL OUT | cleanup-sources STATE OUT\n",
+        "usage: ThirdPartySourceHelper session OUT | sources LABEL OUT | register APP OUT | enable ID TYPE OUT | select ID TYPE PARENT_OR_DASH OUT | menu-select ID NAME CURRENT_NAME OUT | post-key KEYCODE LABEL OUT | cleanup-sources STATE OUT\n",
         stderr
     )
     exit(64)
@@ -578,6 +850,11 @@ do {
             targetID: arguments[2], expectedType: arguments[3],
             parentID: arguments[4] == "-" ? nil : arguments[4],
             outputPath: arguments[5]
+        )
+    case "menu-select" where arguments.count == 6:
+        status = try menuSelect(
+            targetID: arguments[2], targetName: arguments[3],
+            currentName: arguments[4], outputPath: arguments[5]
         )
     case "post-key" where arguments.count == 5:
         guard let keyCode = UInt16(arguments[2]) else { usage() }

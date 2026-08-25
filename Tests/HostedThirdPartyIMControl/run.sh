@@ -70,10 +70,11 @@ collect_evidence() {
     ps -axo pid=,ppid=,user=,comm=,args= >"$EVIDENCE/processes-final.txt" 2>&1
     /usr/bin/log show \
         --last 15m \
-        --style json \
+        --style ndjson \
         --info \
+        --debug \
         --predicate \
-        'process == "Squirrel" OR process == "imklaunchagent" OR process == "System Settings" OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel"' \
+        'subsystem CONTAINS[c] "TextInput" OR category CONTAINS[c] "TextInput" OR process == "Squirrel" OR process == "imklaunchagent" OR process == "TextInputMenuAgent" OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel"' \
         2>"$EVIDENCE/system-log.stderr" \
         | tail -n 2000 >"$EVIDENCE/system-log.jsonl"
     /usr/sbin/screencapture -x "$EVIDENCE/desktop-final.png" \
@@ -89,6 +90,7 @@ finish() {
     set +e
     printf '%s\n' "$status" >"$PRODUCER_EXIT"
     collect_evidence
+    set +e
     "$ROOT/Tests/HostedThirdPartyIMControl/cleanup.sh" \
         >"$EVIDENCE/cleanup-command.log" 2>&1
     python3 "$ROOT/Tests/HostedThirdPartyIMControl/control.py" \

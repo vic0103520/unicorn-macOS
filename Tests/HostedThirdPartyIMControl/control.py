@@ -42,7 +42,9 @@ ASSET_SHA256 = "614746013212937623d5bbab9901e9c43d1ec937aa32307d6b6092a05e308287
 ASSET_URL = "https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg"
 RELEASE_URL = "https://github.com/rime/squirrel/releases/tag/1.1.2"
 SOURCE_URL = "https://github.com/rime/squirrel"
-ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"
+FIRST_SELECTABLE_RUN_URL = (
+    "https://github.com/vic0103520/unicorn-macOS/actions/runs/32828379686"
+)
 
 
 def load_json(path: pathlib.Path, default: Any = None) -> Any:
@@ -118,9 +120,15 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
                 "squirrelParent": {"sourceID": PARENT_ID, "type": PARENT_TYPE},
                 "squirrelMode": {"sourceID": MODE_ID, "type": MODE_TYPE},
             },
+            "cleanHostedRepeat": {
+                "isRepeat": True,
+                "priorRunURL": FIRST_SELECTABLE_RUN_URL,
+                "priorResult": "The exact parent enable request plus exact Allow action made the parent eligible; public selection then returned 0 and made Squirrel Hans current.",
+                "reason": "Squirrel became selectable, so the documented transition sequence is repeated from a fresh GitHub-hosted macos-15 runner.",
+            },
             "smallestCounterfactual": {
-                "transition": f"Enable exact parent {PARENT_ID} before exact mode {MODE_ID}, refresh both live TISInputSourceRefs, then select only {MODE_ID}.",
-                "whySmallest": "The prior hosted Squirrel run enabled the Hans mode while its documented input-method parent remained disabled.",
+                "transition": f"Request public enablement of exact parent {PARENT_ID} before exact mode {MODE_ID}, complete the exact Allow action, refresh both live TISInputSourceRefs, then select only {MODE_ID}.",
+                "whySmallest": "The prior hosted Squirrel run enabled and approved the Hans mode while its documented input-method parent remained disabled; the new variable is the exact parent enable request before mode enablement and approval.",
                 "disconfirmingEvidenceRetained": [
                     "Dvorak transitions in the same Aqua session",
                     "all Dvorak and Squirrel property snapshots",
@@ -386,7 +394,7 @@ def capture_tis_log_window(
         'OR category CONTAINS[c] "TextInput" '
         'OR process == "TextInputMenuAgent" '
         'OR process == "imklaunchagent" '
-        'OR process == "SystemUIServer" '
+        'OR process == "Squirrel" '
         'OR eventMessage CONTAINS[c] "TIS" '
         'OR eventMessage CONTAINS[c] "Squirrel" '
         'OR eventMessage CONTAINS[c] "Dvorak")'
@@ -399,7 +407,7 @@ def capture_tis_log_window(
         "--end",
         end.astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
         "--style",
-        "json",
+        "ndjson",
         "--info",
         "--debug",
         "--predicate",
@@ -478,27 +486,6 @@ def update_initial_dvorak_state(evidence: pathlib.Path, snapshot: dict[str, Any]
     write_json(state_path, state)
 
 
-def element_ids(response: dict[str, Any]) -> list[str]:
-    values = response.get("value", [])
-    if not isinstance(values, list):
-        return []
-    return [
-        value.get(ELEMENT_KEY) or value.get("ELEMENT")
-        for value in values
-        if isinstance(value, dict)
-        and (value.get(ELEMENT_KEY) or value.get("ELEMENT"))
-    ]
-
-
-def find_elements(driver: Any, session_id: str, xpath: str) -> list[str]:
-    response = driver.request(
-        "POST",
-        f"/session/{session_id}/elements",
-        {"using": "xpath", "value": xpath},
-    )
-    return element_ids(response)
-
-
 def semantic_element(driver: Any, session_id: str, element_id: str) -> dict[str, Any]:
     names = (
         "identifier",
@@ -522,67 +509,6 @@ def truthy(value: Any) -> bool:
     return value is True or str(value).lower() == "true"
 
 
-def semantic_values(state: dict[str, Any]) -> set[str]:
-    return {
-        str(state.get(key, "")).strip()
-        for key in ("identifier", "label", "title", "value")
-        if state.get(key) is not None and str(state.get(key, "")).strip()
-    }
-
-
-def unique_input_menu_bar_candidate(
-    states: list[dict[str, Any]], current_name: str
-) -> tuple[dict[str, Any] | None, str]:
-    rules = [
-        (
-            "exact-known-text-input-identifier",
-            lambda state: bool(
-                semantic_values(state)
-                & {
-                    "com.apple.menuextra.textinput",
-                    "com.apple.TextInputMenuAgent",
-                    "TextInputMenuAgent",
-                }
-            ),
-        ),
-        (
-            "exact-input-menu-semantic-name",
-            lambda state: bool(
-                semantic_values(state) & {"Input menu", "Text Input menu"}
-            ),
-        ),
-        (
-            "exact-current-source-name",
-            lambda state: current_name in semantic_values(state),
-        ),
-    ]
-    for rule_name, rule in rules:
-        matches = [state for state in states if rule(state)]
-        if len(matches) == 1:
-            return matches[0], rule_name
-        if len(matches) > 1:
-            return None, f"ambiguous-{rule_name}-{len(matches)}-matches"
-    return None, "no-exact-semantic-input-menu-bar-match"
-
-
-def unique_target_menu_item(
-    states: list[dict[str, Any]], target_name: str
-) -> tuple[dict[str, Any] | None, str]:
-    matches = [state for state in states if target_name in semantic_values(state)]
-    selectable = [
-        state
-        for state in matches
-        if truthy(state.get("enabled")) and truthy(state.get("hittable"))
-    ]
-    if len(selectable) == 1:
-        return selectable[0], "unique-exact-enabled-hittable-target-name"
-    if len(matches) == 1 and not selectable:
-        return None, "exact-target-was-not-enabled-and-hittable"
-    if len(matches) > 1:
-        return None, f"ambiguous-exact-target-{len(matches)}-matches"
-    return None, "exact-target-not-exposed"
-
-
 def menu_selection(
     driver: Any,
     helper: pathlib.Path,
@@ -592,118 +518,29 @@ def menu_selection(
     target_name: str,
     current_name: str,
 ) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "attempted": True,
-        "startedAt": shared.timestamp(),
-        "method": "semantic Accessibility through Appium Mac2/XCTest and the SystemUIServer input menu",
-        "target": {"inputSourceID": target_id, "localizedName": target_name},
-        "usesOCRPixelsOrCoordinates": False,
-        "selectionVerified": False,
-    }
-    session_id: str | None = None
-    try:
-        session_id, response = shared.create_bundle_session(
-            driver, "com.apple.systemuiserver", {"appium:noReset": True}
-        )
-        result["session"] = {"created": True, "response": response}
-        menu_bar_elements = find_elements(
-            driver, session_id, "//XCUIElementTypeMenuBarItem"
-        )
-        menu_bar_states = [
-            semantic_element(driver, session_id, element)
-            for element in menu_bar_elements
-        ]
-        result["menuBarCandidates"] = menu_bar_states
-        menu_bar_item, rule = unique_input_menu_bar_candidate(
-            menu_bar_states, current_name
-        )
-        result["menuBarMatchRule"] = rule
-        if not menu_bar_item:
-            raise RuntimeError(
-                "Input menu bar item did not have one exact semantic match: " + rule
-            )
-        driver.request(
-            "POST",
-            f"/session/{session_id}/element/{menu_bar_item['elementId']}/click",
-            {},
-        )
-        result["inputMenuOpened"] = True
-        time.sleep(0.5)
-        result["accessibilitySourceWithMenuOpen"] = shared.save_source(
-            driver, session_id, evidence / f"input-menu-{name}.xml"
-        )
-        menu_elements = find_elements(
-            driver, session_id, "//XCUIElementTypeMenuItem"
-        )
-        menu_states = [
-            semantic_element(driver, session_id, element) for element in menu_elements
-        ]
-        result["menuItemCandidates"] = menu_states
-        target, target_rule = unique_target_menu_item(menu_states, target_name)
-        result["targetMatchRule"] = target_rule
-        if not target:
-            raise RuntimeError(
-                "Intended input source did not have one exact selectable menu item: "
-                + target_rule
-            )
-        result["targetElement"] = target
-        result["sourceImmediatelyBeforeTargetPress"] = source_snapshot(
-            helper,
-            evidence,
-            f"input-sources-before-{name}-menu-selection.json",
-            f"immediately-before-{name}-menu-selection-attempt",
-        )
-        result["targetPressStartedAt"] = shared.timestamp()
-        driver.request(
-            "POST",
-            f"/session/{session_id}/element/{target['elementId']}/click",
-            {},
-        )
-        result["targetPressed"] = True
-        result["targetPressCompletedAt"] = shared.timestamp()
-        result["sourceImmediatelyAfterTargetPress"] = source_snapshot(
-            helper,
-            evidence,
-            f"input-sources-after-{name}-menu-selection.json",
-            f"immediately-after-{name}-menu-selection-attempt",
-        )
-        result["selectionVerified"] = (
-            current_id(result["sourceImmediatelyAfterTargetPress"]) == target_id
-        )
-    except Exception as error:
-        result["error"] = {
-            "type": type(error).__name__,
-            "message": shared.bounded(str(error)),
-        }
-        if "sourceImmediatelyBeforeTargetPress" not in result:
-            result["sourceImmediatelyBeforeTargetPress"] = source_snapshot(
-                helper,
-                evidence,
-                f"input-sources-before-{name}-menu-selection.json",
-                f"before-incomplete-{name}-menu-selection-attempt",
-            )
-        result["sourceImmediatelyAfterTargetPress"] = source_snapshot(
-            helper,
-            evidence,
-            f"input-sources-after-{name}-menu-selection.json",
-            f"after-incomplete-{name}-menu-selection-attempt",
-        )
-    finally:
-        if session_id:
-            try:
-                driver.request("DELETE", f"/session/{session_id}", timeout=30)
-                result.setdefault("session", {})["deleted"] = True
-            except Exception as error:
-                result.setdefault("session", {})["deleteError"] = shared.bounded(
-                    str(error)
-                )
-    result["completedAt"] = shared.timestamp()
-    result["logs"] = capture_tis_log_window(
-        evidence, f"{name}-menu-selection", result["startedAt"], result["completedAt"]
+    del driver
+    path = evidence / f"{name}-menu-selection.json"
+    command = shared.run_command(
+        [
+            str(helper),
+            "menu-select",
+            target_id,
+            target_name,
+            current_name,
+            str(path),
+        ],
+        timeout=45,
     )
-    write_json(evidence / f"{name}-menu-selection.json", result)
+    result = load_json(path, {})
+    result["command"] = command
+    result["logs"] = capture_tis_log_window(
+        evidence,
+        f"{name}-menu-selection",
+        result.get("startedAt"),
+        result.get("completedAt"),
+    )
+    write_json(path, result)
     return result
-
 
 def approve_system_settings(
     driver: Any, helper: pathlib.Path, evidence: pathlib.Path
@@ -800,7 +637,11 @@ def approve_system_settings(
 
 
 def process_snapshot() -> dict[str, Any]:
-    return shared.process_snapshot(BUNDLE_ID, EXECUTABLE_NAME)
+    value = shared.process_snapshot(BUNDLE_ID, EXECUTABLE_NAME)
+    value["inputMethodLaunchProcesses"] = shared.run_command(
+        ["pgrep", "-alf", "Squirrel|imklaunchagent"], timeout=15
+    )
+    return value
 
 
 def timeline_entries(path: pathlib.Path) -> list[dict[str, Any]]:
@@ -1000,6 +841,12 @@ def squirrel_composition_proof(
             except Exception as error:
                 result["sessionDeleteError"] = shared.bounded(str(error))
     result["completedAt"] = shared.timestamp()
+    result["logs"] = capture_tis_log_window(
+        evidence,
+        f"squirrel-composition-{name}",
+        result["startedAt"],
+        result["completedAt"],
+    )
     write_json(evidence / f"squirrel-composition-proof-{name}.json", result)
     return result
 
@@ -1283,10 +1130,22 @@ def final_diagnosis(
 
     parent_after_registration = relevant_source(registration_after, PARENT_ID)
     parent_after_enable = relevant_source(parent_after, PARENT_ID)
+    parent_after_approval = relevant_source(approval_after, PARENT_ID)
     mode_after_enable = relevant_source(mode_after, MODE_ID)
-    minimal_transition_fixed_parent = (
-        parent_after_registration.get("enabled") is False
-        and parent_after_enable.get("enabled") is True
+    parent_enable_request_accepted_but_pending = (
+        parent_enable.get("status") == 0
+        and parent_after_registration.get("enabled") is False
+        and parent_after_enable.get("enabled") is False
+    )
+    allow_fixed_parent_prerequisite = (
+        approval.get("semanticAllowVerified") is True
+        and approval.get("allowClicked") is True
+        and parent_after_enable.get("enabled") is False
+        and parent_after_approval.get("enabled") is True
+    )
+    documented_sequence_fixed_parent = (
+        parent_enable_request_accepted_but_pending
+        and allow_fixed_parent_prerequisite
     )
 
     if public_selected or menu_selected:
@@ -1338,7 +1197,8 @@ def final_diagnosis(
             "wrongParentOrModeChoice": wrong_parent_or_mode,
             "uiApprovalNotChangingEligibility": approval_no_change,
             "apiRejectionDespiteEveryDocumentedPrerequisite": bounded_contradiction,
-            "actualSuccessfulSquirrelSelection": public_selected or menu_selected,
+            "squirrelBecameCurrent": public_selected or menu_selected,
+            "actualSuccessfulSquirrelSelection": actual_activation,
             "actualSquirrelSelectionAndActivationProven": actual_activation,
         },
         "documentedPrerequisitesImmediatelyBeforePublicSelection": public_prerequisites,
@@ -1370,16 +1230,19 @@ def final_diagnosis(
             "parentWasDisabledAfterRegistration": (
                 parent_after_registration.get("enabled") is False
             ),
-            "exactParentBecameEnabled": (
-                parent_after_enable.get("enabled") is True
+            "parentEnableRequestStatus": parent_enable.get("status"),
+            "parentEnableRequestAcceptedButEligibilityPending": parent_enable_request_accepted_but_pending,
+            "exactAllowActionChangedParentEnabledFalseToTrue": allow_fixed_parent_prerequisite,
+            "exactParentEnabledAfterAllow": (
+                parent_after_approval.get("enabled") is True
             ),
             "intendedModeBecameEnabled": mode_after_enable.get("enabled") is True,
-            "minimalTransitionFixedParentPrerequisite": minimal_transition_fixed_parent,
-            "minimalTransitionWasSufficientForSelection": (
-                minimal_transition_fixed_parent and (public_selected or menu_selected)
+            "minimalDocumentedSequenceFixedParentPrerequisite": documented_sequence_fixed_parent,
+            "minimalDocumentedSequenceWasSufficientForSelection": (
+                documented_sequence_fixed_parent and (public_selected or menu_selected)
             ),
             "disconfirmedAsSufficient": (
-                minimal_transition_fixed_parent
+                documented_sequence_fixed_parent
                 and not (public_selected or menu_selected)
             ),
         },
