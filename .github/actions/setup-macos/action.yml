@@ -1,0 +1,28 @@
+name: Set up macOS toolchain
+
+description: Validate and report the Xcode and Swift toolchain used by CI
+
+runs:
+  using: composite
+  steps:
+  - name: Validate and report toolchain
+    shell: bash -euo pipefail {0}
+    run: |
+      if [[ ! -d "$DEVELOPER_DIR" ]]; then
+        printf 'Expected Xcode developer directory is missing: %s\n' "$DEVELOPER_DIR" >&2
+        exit 1
+      fi
+
+      command -v xcodebuild
+      command -v xcrun
+      command -v swift
+
+      xcode_version="$(xcodebuild -version)"
+      if ! grep -Fqx 'Xcode 16.4' <<< "$xcode_version"; then
+        printf 'Expected Xcode 16.4, found:\n%s\n' "$xcode_version" >&2
+        exit 1
+      fi
+      printf '%s\n' "$xcode_version"
+      swift --version
+      printf 'Host architecture: %s\n' "$(uname -m)"
+      sw_vers
