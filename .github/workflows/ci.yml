@@ -59,21 +59,55 @@ jobs:
     - name: Run lint
       run: make lint
 
-  native-verification:
+  native-tests-and-coverage:
+    name: Native tests and coverage
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Set up macOS toolchain
+      uses: ./.github/actions/setup-macos
+
+    - name: Run native tests and coverage
+      run: scripts/ci/run-native-verification.sh coverage
+
+    - name: Upload native test .xcresult
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: unicorn-native-test-xcresult-macos-15
+        path: build/Test/Results/UnicornCoreTests.xcresult
+        if-no-files-found: error
+        retention-days: 14
+
+    - name: Upload coverage report
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: unicorn-coverage-macos-15
+        path: build/Test/Results/coverage.txt
+        if-no-files-found: error
+        retention-days: 14
+
+    - name: Upload native test diagnostics
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: unicorn-native-test-diagnostics-macos-15
+        path: build/Diagnostics/native-tests-and-coverage.log
+        if-no-files-found: error
+        retention-days: 14
+
+  sanitizer-verification:
     name: ${{ matrix.name }}
+    needs: native-tests-and-coverage
     runs-on: macos-15
     timeout-minutes: ${{ matrix.timeout-minutes }}
     strategy:
       fail-fast: false
       matrix:
         include:
-        - name: Native tests and coverage
-          mode: coverage
-          timeout-minutes: 30
-          xcresult-name: unicorn-native-test-xcresult-macos-15
-          xcresult-path: build/Test/Results/UnicornCoreTests.xcresult
-          diagnostics-name: unicorn-native-test-diagnostics-macos-15
-          diagnostics-path: build/Diagnostics/native-tests-and-coverage.log
         - name: Address and undefined-behavior sanitizers
           mode: address-undefined
           timeout-minutes: 25
@@ -94,10 +128,10 @@ jobs:
     - name: Set up macOS toolchain
       uses: ./.github/actions/setup-macos
 
-    - name: Run native verification
+    - name: Run sanitizer verification
       run: scripts/ci/run-native-verification.sh "${{ matrix.mode }}"
 
-    - name: Upload native test .xcresult
+    - name: Upload sanitizer .xcresult
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
@@ -106,16 +140,7 @@ jobs:
         if-no-files-found: error
         retention-days: 14
 
-    - name: Upload coverage report
-      if: ${{ always() && matrix.mode == 'coverage' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: unicorn-coverage-macos-15
-        path: build/Test/Results/coverage.txt
-        if-no-files-found: error
-        retention-days: 14
-
-    - name: Upload native test diagnostics
+    - name: Upload sanitizer diagnostics
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
