@@ -1208,10 +1208,13 @@ def final_diagnosis(
         and allow_fixed_parent_prerequisite
     )
 
-    if public_selected or menu_selected:
+    if actual_activation:
+        unresolved = "none: Squirrel became current and process plus deterministic composition proved activation"
+    elif public_selected or menu_selected:
         unresolved = (
-            "none: Squirrel became current through "
-            + ("public TIS selection" if public_selected else "the semantic input menu")
+            "activation after current-source selection: Dvorak produced its deterministic physical-key mapping, while Squirrel recorded no process, IMK launch failure/no endpoint, and no expected committed composition"
+            if imk_launch_failure
+            else "activation after current-source selection: Dvorak produced its deterministic physical-key mapping, while Squirrel had no process plus expected committed composition proof"
         )
     elif all_prerequisites and public_rejected:
         unresolved = (
