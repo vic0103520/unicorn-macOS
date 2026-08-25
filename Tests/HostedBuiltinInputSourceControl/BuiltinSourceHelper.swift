@@ -142,7 +142,8 @@ private func transition(targetID: String, outputPath: String) throws -> Int32 {
         try writeJSON(result, path: outputPath)
         return 2
     }
-    let before = currentSource()
+    let before = summary(currentSource())
+    let targetBefore = summary(target)
     let wasEnabled = boolProperty(target, enabledKey) ?? false
     let enableStatus = TISEnableInputSource(target)
     let refreshedTarget = source(withID: targetID)
@@ -153,8 +154,8 @@ private func transition(targetID: String, outputPath: String) throws -> Int32 {
     let result: [String: Any] = [
         "timestamp": timestamp(),
         "success": success,
-        "before": summary(before),
-        "targetBefore": summary(target),
+        "before": before,
+        "targetBefore": targetBefore,
         "targetInitiallyEnabled": wasEnabled,
         "enableStatus": enableStatus,
         "selectionStatus": selectionStatus as Any,

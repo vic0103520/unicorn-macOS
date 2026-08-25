@@ -2,9 +2,6 @@ name: Hosted ARM64 Built-in Input Source Control
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - fm/unicorn-github-hosted-e2e-f10
 
 permissions:
   contents: read
