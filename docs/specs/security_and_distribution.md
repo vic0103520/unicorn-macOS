@@ -38,7 +38,9 @@ After confirmation, the script recursively removes `com.apple.quarantine` from t
 
 ### Pull-request CI
 
-For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) installs SwiftLint, runs `make lint`, runs `make test`, and runs `make install`. The install target builds, copies the app into the runner user's input-method directory, and registers it with Launch Services.
+For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs independent lint, native test with coverage, and universal Release-build jobs on GitHub-hosted macOS 15 with Xcode 16.4. The lint job downloads checksum-verified SwiftLint 0.65.1. Address plus undefined-behavior sanitizer verification and thread sanitizer verification run independently after the native tests pass.
+
+Pull-request CI does not run the installer, copy or activate the input method, or register it with Launch Services. Xcode builds use [`scripts/ci/xcodebuild-without-registration.sh`](../../scripts/ci/xcodebuild-without-registration.sh) to deny file access to Xcode's unconditional `lsregister` subprocess. Release-build verification checks required bundle resources, property-list identity against Release build settings, exactly the arm64 and x86_64 executable slices, and ad-hoc signing. Successful cross-architecture compilation is not runtime compatibility evidence.
 
 ### Tagged releases
 
