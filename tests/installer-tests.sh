@@ -21,17 +21,11 @@ CANDIDATE_APP="$WORK_DIR/candidate source/unicorn.app"
 RELEASE_ASSETS="$WORK_DIR/release assets"
 BASE_DISTRIBUTION="$WORK_DIR/base distribution"
 FAKE_LSREGISTER="$WORK_DIR/fake lsregister"
-FAKE_PKILL="$WORK_DIR/fake pkill"
 create_test_app "$CANDIDATE_APP" 2.0.0 200 candidate
 "$TEST_ROOT_DIR/scripts/package-release.sh" v2.0.0 200 "$CANDIDATE_APP" "$RELEASE_ASSETS" >/dev/null
 /bin/mkdir "$BASE_DISTRIBUTION"
 /usr/bin/unzip -q "$RELEASE_ASSETS/unicorn-macos.zip" -d "$BASE_DISTRIBUTION"
 make_fake_launch_services "$FAKE_LSREGISTER"
-cat > "$FAKE_PKILL" <<'EOF'
-#!/bin/sh
-exit "${UNICORN_TEST_PKILL_STATUS:-1}"
-EOF
-/bin/chmod 755 "$FAKE_PKILL"
 
 new_distribution() {
     case_name=$1
@@ -64,7 +58,6 @@ run_installer() {
         UNICORN_ASSUME_YES=1 \
         UNICORN_INSTALL_DIR="$destination" \
         UNICORN_LSREGISTER_COMMAND="$FAKE_LSREGISTER" \
-        UNICORN_PKILL_COMMAND="$FAKE_PKILL" \
         UNICORN_TEST_LS_DB="$destination/launch services db" \
         "$@" \
         /bin/sh "$distribution/install.sh" > "$output" 2>&1
@@ -264,18 +257,6 @@ assert_installed_version "$TAMPER_DESTINATION" 1.0.0
 assert_transaction_clean "$TAMPER_DESTINATION"
 pass 'candidate tampering is rejected before destination changes'
 
-PKILL_DISTRIBUTION=$(new_distribution 'process termination failure')
-PKILL_DESTINATION=$(new_destination 'process termination failure')
-install_old_app "$PKILL_DESTINATION"
-PKILL_OUTPUT="$WORK_DIR/process termination failure/output"
-if run_installer "$PKILL_DISTRIBUTION" "$PKILL_DESTINATION" "$PKILL_OUTPUT" UNICORN_TEST_PKILL_STATUS=7; then
-    fail_test 'process termination failure unexpectedly succeeded'
-fi
-assert_not_contains "$PKILL_OUTPUT" 'Success:'
-assert_installed_version "$PKILL_DESTINATION" 1.0.0
-assert_transaction_clean "$PKILL_DESTINATION"
-pass 'failed restart command rolls back and never prints success'
-
 FAILING_LOCK_CLEANUP="$WORK_DIR/fail lock cleanup"
 cat > "$FAILING_LOCK_CLEANUP" <<'EOF'
 #!/bin/sh
@@ -304,7 +285,6 @@ CANCEL_OUTPUT="$WORK_DIR/cancelled install/output"
 printf 'n\n' | env \
     UNICORN_INSTALL_DIR="$CANCEL_DESTINATION" \
     UNICORN_LSREGISTER_COMMAND="$FAKE_LSREGISTER" \
-    UNICORN_PKILL_COMMAND="$FAKE_PKILL" \
     UNICORN_TEST_LS_DB="$CANCEL_DESTINATION/launch services db" \
     /bin/sh "$CANCEL_DISTRIBUTION/install.sh" > "$CANCEL_OUTPUT" 2>&1
 assert_contains "$CANCEL_OUTPUT" 'Installation cancelled. No changes were made.'

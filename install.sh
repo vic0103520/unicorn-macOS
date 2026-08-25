@@ -12,7 +12,8 @@ METADATA_PATH="$SCRIPT_DIR/$METADATA_NAME"
 EXECUTABLE_SUM_PATH="$SCRIPT_DIR/$EXECUTABLE_SUM_NAME"
 INSTALL_DIR=${UNICORN_INSTALL_DIR:-"$HOME/Library/Input Methods"}
 LSREGISTER_COMMAND=${UNICORN_LSREGISTER_COMMAND:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}
-PKILL_COMMAND=${UNICORN_PKILL_COMMAND:-/usr/bin/pkill}
+LSOF_COMMAND=/usr/sbin/lsof
+KILL_COMMAND=/bin/kill
 COPY_COMMAND=${UNICORN_COPY_COMMAND:-/usr/bin/ditto}
 MOVE_COMMAND=${UNICORN_MOVE_COMMAND:-/bin/mv}
 REMOVE_COMMAND=${UNICORN_REMOVE_COMMAND:-/bin/rm}
@@ -29,6 +30,9 @@ INSTALLED_PATH=
 EXPECTED_VERSION=
 EXPECTED_BUILD=
 EXPECTED_EXECUTABLE_SUM=
+OLD_PROCESS_PIDS=
+TERMINATION_ATTEMPTS=${UNICORN_TEST_TERMINATION_ATTEMPTS:-100}
+TERMINATION_POLL_SECONDS=0.05
 
 error() {
     printf 'Error: %s\n' "$*" >&2
@@ -196,6 +200,98 @@ register_app() {
     '
 }
 
+inspect_old_executable() {
+    inspect_path=$1
+    shift
+    inspect_error_path="$LOCK_PATH/process-inspection-error"
+    if inspect_output=$("$LSOF_COMMAND" -a -d txt -t "$@" -- "$inspect_path" 2>"$inspect_error_path"); then
+        inspect_status=0
+    else
+        inspect_status=$?
+    fi
+
+    if [ -s "$inspect_error_path" ] || [ "$inspect_status" -gt 1 ]; then
+        return 2
+    fi
+    case "$inspect_output" in
+        '') [ "$inspect_status" -eq 1 ] || return 2 ;;
+        *)
+            [ "$inspect_status" -eq 0 ] || return 2
+            while IFS= read -r inspect_pid; do
+                case "$inspect_pid" in ''|*[!0-9]*) return 2 ;; esac
+            done <<EOF
+$inspect_output
+EOF
+            ;;
+    esac
+    printf '%s\n' "$inspect_output"
+    return "$inspect_status"
+}
+
+snapshot_old_processes() {
+    old_executable=$1
+    if OLD_PROCESS_PIDS=$(inspect_old_executable "$old_executable"); then
+        snapshot_status=0
+    else
+        snapshot_status=$?
+    fi
+    [ "$snapshot_status" -eq 0 ] || [ "$snapshot_status" -eq 1 ] || \
+        fail "unable to inspect processes executing the previous Unicorn executable"
+    [ -z "$OLD_PROCESS_PIDS" ] || OLD_PROCESS_PIDS=$(printf '%s\n' "$OLD_PROCESS_PIDS" | /usr/bin/sort -n -u)
+}
+
+old_identity_is_running() {
+    identity_pid=$1
+    identity_executable=$2
+    if identity_output=$(inspect_old_executable "$identity_executable" -p "$identity_pid"); then
+        [ "$identity_output" = "$identity_pid" ] || return 2
+        return 0
+    else
+        identity_status=$?
+    fi
+    [ "$identity_status" -eq 1 ] && return 1
+    return 2
+}
+
+terminate_old_processes() {
+    terminate_executable=$1
+    [ -n "$OLD_PROCESS_PIDS" ] || return 0
+
+    for terminate_pid in $OLD_PROCESS_PIDS; do
+        if old_identity_is_running "$terminate_pid" "$terminate_executable"; then
+            if ! "$KILL_COMMAND" -TERM "$terminate_pid" 2>/dev/null; then
+                if old_identity_is_running "$terminate_pid" "$terminate_executable"; then
+                    fail "unable to signal a previous Unicorn process (pid $terminate_pid)"
+                else
+                    signal_inspection_status=$?
+                    [ "$signal_inspection_status" -eq 1 ] || fail "unable to inspect a previous Unicorn process after signaling failed"
+                fi
+            fi
+        else
+            identity_status=$?
+            [ "$identity_status" -eq 1 ] || fail "unable to inspect a previous Unicorn process before signaling"
+        fi
+    done
+
+    termination_attempt=0
+    while [ "$termination_attempt" -lt "$TERMINATION_ATTEMPTS" ]; do
+        termination_survivors=
+        for terminate_pid in $OLD_PROCESS_PIDS; do
+            if old_identity_is_running "$terminate_pid" "$terminate_executable"; then
+                termination_survivors="$termination_survivors $terminate_pid"
+            else
+                identity_status=$?
+                [ "$identity_status" -eq 1 ] || fail "unable to inspect a previous Unicorn process while waiting for termination"
+            fi
+        done
+        [ -n "$termination_survivors" ] || return 0
+        termination_attempt=$((termination_attempt + 1))
+        [ "$termination_attempt" -lt "$TERMINATION_ATTEMPTS" ] || break
+        /bin/sleep "$TERMINATION_POLL_SECONDS"
+    done
+    fail "unable to terminate the previous Unicorn process within the grace period"
+}
+
 rollback_installation() {
     printf 'Installation failed; restoring the previous installation...\n' >&2
     if path_exists "$INSTALLED_PATH"; then
@@ -236,6 +332,10 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+case "$TERMINATION_ATTEMPTS" in
+    ''|0|*[!0-9]*) fail "invalid process termination grace-period attempt count" ;;
+esac
 
 printf '%s\n' '--------------------------------------------------'
 printf '%s\n' 'Unicorn: macOS Installer'
@@ -341,6 +441,8 @@ if path_exists "$INSTALLED_PATH"; then
     validate_app "$INSTALLED_PATH" '' '' || fail "existing Unicorn installation is invalid; refusing to replace it automatically"
     "$MOVE_COMMAND" "$INSTALLED_PATH" "$BACKUP_PATH" || fail "unable to preserve the existing installation"
     BACKUP_CREATED=1
+    REPLACEMENT_ACTIVE=1
+    snapshot_old_processes "$BACKUP_PATH/Contents/MacOS/unicorn"
 fi
 REPLACEMENT_ACTIVE=1
 "$MOVE_COMMAND" "$STAGE_PATH" "$INSTALLED_PATH" || fail "unable to move the staged app into place"
@@ -354,12 +456,9 @@ fi
 printf 'Registering Unicorn with Launch Services...\n'
 register_app "$INSTALLED_PATH" || fail "Launch Services registration or its postcondition failed"
 
-if "$PKILL_COMMAND" -f "$INSTALLED_PATH/Contents/MacOS/unicorn" >/dev/null 2>&1; then
-    pkill_status=0
-else
-    pkill_status=$?
+if [ "$BACKUP_CREATED" -eq 1 ]; then
+    terminate_old_processes "$BACKUP_PATH/Contents/MacOS/unicorn"
 fi
-[ "$pkill_status" -eq 0 ] || [ "$pkill_status" -eq 1 ] || fail "unable to terminate the previous Unicorn process"
 
 INSTALL_COMMITTED=1
 if [ "$BACKUP_CREATED" -eq 1 ]; then

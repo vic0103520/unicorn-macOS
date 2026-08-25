@@ -185,6 +185,7 @@ test: test-scripts test-native
 test-scripts:
 	@./tests/release-scripts-tests.sh
 	@./tests/installer-tests.sh
+	@./tests/installer-process-tests.sh
 
 test-native:
 	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
