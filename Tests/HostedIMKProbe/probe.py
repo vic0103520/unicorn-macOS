@@ -627,13 +627,18 @@ def attempt_input_source_consent(
             except Exception as error:
                 result.setdefault("session", {})["deleteError"] = bounded(str(error))
 
-    retry_path = evidence / "input-source-selection-after-consent.json"
-    retry = run_command(
-        [str(helper), "select", bundle_id, mode_id, str(retry_path)], timeout=30
-    )
-    result["selectionRetry"] = {
-        "command": retry,
-        "data": load_json(retry_path, {}),
+    observation_path = evidence / "input-source-selection-after-consent.json"
+    observation: dict[str, Any] = {}
+    for attempt in range(1, 31):
+        observation = native_source_snapshot(helper, observation_path)
+        if source_is_selected(observation, bundle_id):
+            break
+        time.sleep(0.5)
+    result["selectionObservation"] = {
+        "attempts": attempt,
+        "selected": source_is_selected(observation, bundle_id),
+        "snapshot": observation,
+        "modeID": mode_id,
     }
     result["completedAt"] = timestamp()
     return result
@@ -870,11 +875,11 @@ def run_probe(
             passed = False
             result_status = 1
             consent = report.get("inputSourceConsent", {})
-            retry = consent.get("selectionRetry", {}).get("data", {})
+            observation = consent.get("selectionObservation", {})
             if consent.get("error"):
                 classification = "input_source_consent_not_automatable_with_mac2"
-            elif consent.get("allowClicked") and retry.get("selectionStatus") != 0:
-                classification = "input_source_secure_consent_prompt_ignored_mac2_click"
+            elif consent.get("allowClicked") and not observation.get("selected"):
+                classification = "input_source_selection_remained_blocked_after_consent"
             else:
                 classification = "input_source_selection_blocked"
     except Exception as error:

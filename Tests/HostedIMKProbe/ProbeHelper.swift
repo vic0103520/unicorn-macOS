@@ -186,18 +186,20 @@ private func runInstallAndSelect(
         enableStatus = TISEnableInputSource(probeSource)
         state["selectionAttempted"] = true
         try writeJSON(state, to: statePath)
-        selectionStatus = TISSelectInputSource(probeSource)
     }
 
     let expectedSelectedID = probeSource.flatMap {
         stringProperty($0, inputSourceIDKey)
     }
     var selected = currentKeyboardInputSource()
-    for _ in 0..<50 {
-        let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
-        if selectedID == expectedSelectedID { break }
-        Thread.sleep(forTimeInterval: 0.1)
-        selected = currentKeyboardInputSource()
+    if let probeSource {
+        for _ in 0..<120 {
+            selectionStatus = TISSelectInputSource(probeSource)
+            selected = currentKeyboardInputSource()
+            let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
+            if selectedID == expectedSelectedID { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
     }
 
     let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
@@ -226,48 +228,6 @@ private func runInstallAndSelect(
     state["selectionStatus"] = selectionStatus as Any
     state["selectionVerified"] = selectionVerified
     try writeJSON(state, to: statePath)
-    try writeJSON(result, to: resultPath)
-    printJSON(result)
-    return success ? 0 : 2
-}
-
-private func runSelect(
-    bundleID: String,
-    modeID: String,
-    resultPath: String
-) throws -> Int32 {
-    guard let probeSource = source(matchingBundleID: bundleID, modeID: modeID) else {
-        let result: [String: Any] = [
-            "timestamp": isoTimestamp(),
-            "success": false,
-            "error": "Registered input source was not found",
-        ]
-        try writeJSON(result, to: resultPath)
-        printJSON(result)
-        return 2
-    }
-
-    let selectionStatus = TISSelectInputSource(probeSource)
-    let expectedSelectedID = stringProperty(probeSource, inputSourceIDKey)
-    var selected = currentKeyboardInputSource()
-    for _ in 0..<50 {
-        let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
-        if selectedID == expectedSelectedID { break }
-        Thread.sleep(forTimeInterval: 0.1)
-        selected = currentKeyboardInputSource()
-    }
-    let selectedID = selected.flatMap { stringProperty($0, inputSourceIDKey) }
-    let verified = expectedSelectedID != nil && selectedID == expectedSelectedID
-    let success = selectionStatus == noErr && verified
-    let result: [String: Any] = [
-        "timestamp": isoTimestamp(),
-        "success": success,
-        "probeSource": sourceSummary(probeSource),
-        "enableAttempted": false,
-        "selectionStatus": selectionStatus,
-        "selectedSource": sourceSummary(selected),
-        "selectionVerified": verified,
-    ]
     try writeJSON(result, to: resultPath)
     printJSON(result)
     return success ? 0 : 2
@@ -410,7 +370,7 @@ private func runCGEventKeys(outputPath: String) throws -> Int32 {
 
 private func usage() -> Never {
     fputs(
-        "usage: ProbeHelper session OUTPUT | sources OUTPUT | install-select APP BUNDLE MODE STATE RESULT | select BUNDLE MODE RESULT | cleanup STATE BUNDLE MODE APP RESULT | cg-keys OUTPUT\n",
+        "usage: ProbeHelper session OUTPUT | sources OUTPUT | install-select APP BUNDLE MODE STATE RESULT | cleanup STATE BUNDLE MODE APP RESULT | cg-keys OUTPUT\n",
         stderr
     )
     exit(64)
@@ -432,10 +392,6 @@ do {
         status = try runInstallAndSelect(
             appPath: arguments[2], bundleID: arguments[3], modeID: arguments[4],
             statePath: arguments[5], resultPath: arguments[6]
-        )
-    case "select" where arguments.count == 5:
-        status = try runSelect(
-            bundleID: arguments[2], modeID: arguments[3], resultPath: arguments[4]
         )
     case "cleanup" where arguments.count == 7:
         status = try runCleanup(

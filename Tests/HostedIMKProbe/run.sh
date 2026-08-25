@@ -16,6 +16,7 @@ XCODE_APP="$PRODUCTS/Release/unicorn.app"
 BUILT_APP="$BUILD_ROOT/UnicornHostedIMKProbe.app"
 INSTALLED_APP="$HOME/Library/Input Methods/UnicornHostedIMKProbe.app"
 PRODUCER_EXIT_FILE="$EVIDENCE/producer-exit-code.txt"
+SELECTION_PID=""
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$EVIDENCE" "$BIN_DIR"
@@ -119,6 +120,14 @@ finish() {
     local status=$?
     trap - EXIT INT TERM
     set +e
+    if [[ -n "$SELECTION_PID" ]]; then
+        if kill -0 "$SELECTION_PID" 2>/dev/null; then
+            kill "$SELECTION_PID" 2>/dev/null
+        fi
+        wait "$SELECTION_PID"
+        printf '%s\n' "$?" >"$EVIDENCE/input-source-selection-exit-code.txt"
+        SELECTION_PID=""
+    fi
     printf '%s\n' "$status" >"$PRODUCER_EXIT_FILE"
     collect_evidence
     "$ROOT/Tests/HostedIMKProbe/cleanup.sh" \
@@ -276,19 +285,15 @@ if [[ -e "$INSTALLED_APP" ]]; then
 fi
 mkdir -p "$(dirname "$INSTALLED_APP")"
 ditto "$BUILT_APP" "$INSTALLED_APP"
-set +e
 "$HELPER" install-select \
     "$INSTALLED_APP" \
     "$PROBE_BUNDLE_ID" \
     "$PROBE_MODE_ID" \
     "$EVIDENCE/input-source-state.json" \
-    "$EVIDENCE/input-source-selection.json"
-selection_status=$?
-set -e
-printf '%s\n' "$selection_status" >"$EVIDENCE/input-source-selection-exit-code.txt"
-record_phase \
-    "register-and-select-input-source" \
-    "completed-with-status-$selection_status"
+    "$EVIDENCE/input-source-selection.json" \
+    >"$EVIDENCE/input-source-selection-command.log" 2>&1 &
+SELECTION_PID=$!
+record_phase "register-and-select-input-source" "helper-started"
 
 record_phase "appium-inputmethodkit-probe" "started"
 python3 "$ROOT/Tests/HostedIMKProbe/probe.py" run \
