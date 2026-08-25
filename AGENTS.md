@@ -64,7 +64,7 @@ Use standard `git` commands for local repository state such as branches, commits
 - `unicorn/keymap.json`: bundled symbol data.
 - `.github/workflows/`: pull-request CI and tagged-release automation.
 - `scripts/package-release.sh` and `scripts/verify-release.sh`: final-archive production and offline contract verification.
-- `tests/release-scripts-tests.sh` and `tests/installer-tests.sh`: release and isolated destructive-path regressions.
+- `tests/release-scripts-tests.sh`, `tests/installer-tests.sh`, and `tests/installer-process-tests.sh`: release, isolated destructive-path, and real-process installer regressions.
 
 ## Maintaining this file
 

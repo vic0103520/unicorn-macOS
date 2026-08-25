@@ -94,7 +94,7 @@ Unicorn is an independent open-source project. The [Makefile](Makefile) build an
 
 The source is available in this [GitHub repository](https://github.com/vic0103520/unicorn-macOS) for inspection. Unicorn's entitlements do not request network access, and the current source contains no network client behavior. The installer checks the bundle identity, version, required files, executable digest, and ad-hoc signature before changing the destination. These are consistency checks, not proof of publisher identity.
 
-After confirmation, the installer stages the app in `~/Library/Input Methods/`, preserves a valid existing installation, replaces and registers the app, and checks the installed state. A replacement, registration, or restart failure does not print success and triggers rollback. A later run restores a preserved backup left by an uncatchable interruption before attempting another installation. If macOS still blocks the app, use the authorization options shown by System Settings or Finder only after verifying and trusting the artifact.
+After confirmation, the installer stages the app in `~/Library/Input Methods/`, preserves a valid existing installation, replaces and registers the app, and checks the installed state. A replacement, registration, or graceful termination failure does not print success and triggers rollback. A later run restores a preserved backup left by an uncatchable interruption before attempting another installation. If macOS still blocks the app, use the authorization options shown by System Settings or Finder only after verifying and trusting the artifact.
 
 Technical signing, installer, integrity, and release-verification behavior is canonical in [Security and Distribution](docs/specs/security_and_distribution.md).
 
