@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+XCODEBUILD=${XCODEBUILD:-xcodebuild}
+
 usage() {
   printf 'Usage: %s {coverage|address-undefined|thread}\n' "$0" >&2
 }
@@ -16,8 +18,6 @@ mkdir -p build/Diagnostics
 
 case "$mode" in
   coverage)
-    # The coverage target also cross-compiles the app. Xcode's automatic build-product
-    # registration is contained by ephemeral runner teardown; CI never installs or activates it.
     make coverage VERBOSE=1 NO_COLOR=1 \
       2>&1 | tee build/Diagnostics/native-tests-and-coverage.log
     xcrun xccov view --report --only-targets \
@@ -29,7 +29,7 @@ case "$mode" in
     rm -rf "$root"
     mkdir -p "$root"
     make test-native \
-      XCODEBUILD='xcodebuild -enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES' \
+      XCODEBUILD="$XCODEBUILD -enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES" \
       TEST_ROOT="$root" \
       TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult" \
       NATIVE_ARCH="$(uname -m)" \
@@ -42,7 +42,7 @@ case "$mode" in
     rm -rf "$root"
     mkdir -p "$root"
     make test-native \
-      XCODEBUILD='xcodebuild -enableThreadSanitizer YES' \
+      XCODEBUILD="$XCODEBUILD -enableThreadSanitizer YES" \
       TEST_ROOT="$root" \
       TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult" \
       NATIVE_ARCH="$(uname -m)" \

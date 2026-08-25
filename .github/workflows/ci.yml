@@ -13,6 +13,7 @@ concurrency:
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  XCODEBUILD: scripts/ci/xcodebuild-without-registration.sh
 
 defaults:
   run:
@@ -161,8 +162,6 @@ jobs:
 
     - name: Build Release app for arm64 and x86_64
       run: |
-        # Xcode automatically registers macOS app build products. The effect is contained by
-        # ephemeral runner teardown; CI never installs it, copies it into Input Methods, explicitly registers it, or activates it.
         root="$PWD/build/CIRelease"
         rm -rf "$root"
         mkdir -p "$root" build/Diagnostics
