@@ -254,24 +254,43 @@ old_identity_is_running() {
     return 2
 }
 
+signal_old_identity() {
+    signal_pid=$1
+    signal_executable=$2
+
+    if old_identity_is_running "$signal_pid" "$signal_executable"; then
+        if "$KILL_COMMAND" -TERM "$signal_pid" 2>/dev/null; then
+            return 0
+        fi
+        if old_identity_is_running "$signal_pid" "$signal_executable"; then
+            return 3
+        else
+            signal_status=$?
+        fi
+        [ "$signal_status" -eq 1 ] && return 1
+        return 2
+    else
+        signal_status=$?
+    fi
+    return "$signal_status"
+}
+
 terminate_old_processes() {
     terminate_executable=$1
     [ -n "$OLD_PROCESS_PIDS" ] || return 0
 
     for terminate_pid in $OLD_PROCESS_PIDS; do
-        if old_identity_is_running "$terminate_pid" "$terminate_executable"; then
-            if ! "$KILL_COMMAND" -TERM "$terminate_pid" 2>/dev/null; then
-                if old_identity_is_running "$terminate_pid" "$terminate_executable"; then
-                    fail "unable to signal a previous Unicorn process (pid $terminate_pid)"
-                else
-                    signal_inspection_status=$?
-                    [ "$signal_inspection_status" -eq 1 ] || fail "unable to inspect a previous Unicorn process after signaling failed"
-                fi
-            fi
+        if signal_old_identity "$terminate_pid" "$terminate_executable"; then
+            signal_status=0
         else
-            identity_status=$?
-            [ "$identity_status" -eq 1 ] || fail "unable to inspect a previous Unicorn process before signaling"
+            signal_status=$?
         fi
+        case "$signal_status" in
+            0|1) ;;
+            2) fail "unable to inspect a previous Unicorn process before or after signaling" ;;
+            3) fail "unable to signal a previous Unicorn process (pid $terminate_pid)" ;;
+            *) fail "unexpected previous Unicorn process signaling status" ;;
+        esac
     done
 
     termination_attempt=0
