@@ -1,0 +1,45 @@
+name: Hosted ARM64 Third-Party Input Method Control
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicorn-hosted-arm64-inputmethodkit-gui
+  cancel-in-progress: false
+
+jobs:
+  third-party-input-method-control:
+    name: macOS 15 ARM64 Squirrel control
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out trusted branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run bounded third-party input-method control
+        id: producer
+        run: Tests/HostedThirdPartyIMControl/run.sh
+
+      - name: Restore U.S. and remove temporary Squirrel state
+        if: always()
+        run: Tests/HostedThirdPartyIMControl/cleanup.sh
+
+      - name: Finalize machine-readable evidence
+        if: always()
+        run: |
+          status="$(cat build/HostedThirdPartyIMControl/evidence/producer-exit-code.txt 2>/dev/null || printf '1')"
+          python3 Tests/HostedThirdPartyIMControl/control.py \
+            finalize build/HostedThirdPartyIMControl/evidence "$status"
+
+      - name: Upload bounded control evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-arm64-third-party-input-method-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/HostedThirdPartyIMControl/evidence
+          if-no-files-found: error
+          retention-days: 14
