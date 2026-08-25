@@ -74,7 +74,7 @@ collect_evidence() {
         --info \
         --debug \
         --predicate \
-        'subsystem CONTAINS[c] "TextInput" OR category CONTAINS[c] "TextInput" OR process == "Squirrel" OR process == "imklaunchagent" OR process == "TextInputMenuAgent" OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel"' \
+        'subsystem CONTAINS[c] "TextInput" OR category CONTAINS[c] "TextInput" OR process == "Squirrel" OR process == "imklaunchagent" OR process == "TextInputMenuAgent" OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel" OR eventMessage CONTAINS[c] "LaunchInputMethod" OR eventMessage CONTAINS[c] "getIMKXPCEndpoint"' \
         2>"$EVIDENCE/system-log.stderr" \
         | tail -n 2000 >"$EVIDENCE/system-log.jsonl"
     /usr/sbin/screencapture -x "$EVIDENCE/desktop-final.png" \

@@ -395,7 +395,7 @@ def capture_tis_log_window(
         'OR process == "TextInputMenuAgent" '
         'OR process == "imklaunchagent" '
         'OR process == "Squirrel" '
-        'OR eventMessage CONTAINS[c] "TIS" '
+        'OR eventMessage CONTAINS[c] "im.rime.inputmethod.Squirrel" '
         'OR eventMessage CONTAINS[c] "Squirrel" '
         'OR eventMessage CONTAINS[c] "Dvorak")'
     )
@@ -452,6 +452,53 @@ def capture_tis_log_window(
     }
     write_json(evidence / f"tis-log-{name}-metadata.json", result)
     return result
+
+
+def bounded_imk_log_evidence(path: pathlib.Path) -> dict[str, Any]:
+    retained: list[dict[str, Any]] = []
+    keywords = (
+        "launchinputmethod",
+        "imklaunchagent",
+        "getimkxpcendpoint",
+        "no endpoint",
+        BUNDLE_ID.lower(),
+        MODE_ID.lower(),
+    )
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        message = str(event.get("eventMessage", ""))
+        if any(keyword in message.lower() for keyword in keywords):
+            retained.append(
+                {
+                    "timestamp": event.get("timestamp"),
+                    "process": event.get("process"),
+                    "processImagePath": event.get("processImagePath"),
+                    "subsystem": event.get("subsystem"),
+                    "category": event.get("category"),
+                    "eventMessage": message,
+                }
+            )
+    launch_failure = any(
+        "launchinputmethod() error" in str(event.get("eventMessage", "")).lower()
+        or "no endpoint" in str(event.get("eventMessage", "")).lower()
+        for event in retained
+    )
+    return {
+        "sourcePath": path.name,
+        "matchingEventCount": len(retained),
+        "retainedEvents": retained[:100],
+        "retainedEventLimit": 100,
+        "imkLaunchFailureObserved": launch_failure,
+    }
 
 
 def native_transition(
@@ -847,6 +894,9 @@ def squirrel_composition_proof(
         result["startedAt"],
         result["completedAt"],
     )
+    result["boundedIMKLaunchEvidence"] = bounded_imk_log_evidence(
+        evidence / result["logs"]["logPath"]
+    )
     write_json(evidence / f"squirrel-composition-proof-{name}.json", result)
     return result
 
@@ -1119,6 +1169,16 @@ def final_diagnosis(
         public_composition.get("actualSelectionAndActivationProven") is True
         or menu_composition.get("actualSelectionAndActivationProven") is True
     )
+    public_imk = public_composition.get("boundedIMKLaunchEvidence", {})
+    menu_imk = menu_composition.get("boundedIMKLaunchEvidence", {})
+    imk_launch_failure = (
+        public_imk.get("imkLaunchFailureObserved") is True
+        or menu_imk.get("imkLaunchFailureObserved") is True
+    )
+    squirrel_process_observed = (
+        public_composition.get("processObserved") is True
+        or menu_composition.get("processObserved") is True
+    )
     approval_changed_eligibility = (
         approval_before_prerequisites != approval_after_prerequisites
     )
@@ -1179,7 +1239,9 @@ def final_diagnosis(
         )
     elif public_selected or menu_selected:
         conclusion = (
-            "Squirrel became the exact current source, but process plus deterministic composition did not fully prove activation."
+            "Squirrel became the exact current source, but actual activation was not proven: no Squirrel process appeared and deterministic composition failed. The bounded IMK log recorded a LaunchInputMethod failure and/or no endpoint."
+            if imk_launch_failure
+            else "Squirrel became the exact current source, but process plus deterministic composition did not fully prove activation."
         )
     else:
         conclusion = (
@@ -1213,6 +1275,45 @@ def final_diagnosis(
             "targetPressed": menu.get("targetPressed", False),
             "selectionVerifiedByCurrentSource": menu_selected,
             "error": menu.get("error"),
+            "menuBarCandidatesRetained": len(menu.get("menuBarCandidates", [])),
+        },
+        "actualSelectionProof": {
+            "becameExactCurrentSource": public_selected or menu_selected,
+            "squirrelProcessObserved": squirrel_process_observed,
+            "imkLaunchFailureObserved": imk_launch_failure,
+            "publicPathIMKLaunchEvidence": public_imk,
+            "menuPathIMKLaunchEvidence": menu_imk,
+            "publicPathDeterministicComposition": {
+                "sourceSelectedAtDelivery": public_composition.get(
+                    "sourceSelectedAtDelivery", False
+                ),
+                "actualTextScalars": nested(
+                    public_composition,
+                    "finalClientDiagnostics",
+                    "textScalars",
+                    default=[],
+                ),
+                "expectedTextScalars": EXPECTED_SCALARS,
+                "passed": public_composition.get(
+                    "exactTextAssertionPassed", False
+                ),
+            },
+            "menuPathDeterministicComposition": {
+                "sourceSelectedAtDelivery": menu_composition.get(
+                    "sourceSelectedAtDelivery", False
+                ),
+                "actualTextScalars": nested(
+                    menu_composition,
+                    "finalClientDiagnostics",
+                    "textScalars",
+                    default=[],
+                ),
+                "expectedTextScalars": EXPECTED_SCALARS,
+                "passed": menu_composition.get(
+                    "exactTextAssertionPassed", False
+                ),
+            },
+            "actualSuccessfulSelectionAndActivationProven": actual_activation,
         },
         "approvalEligibilityComparison": {
             "before": approval_before_prerequisites,
