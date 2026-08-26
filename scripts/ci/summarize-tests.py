@@ -74,6 +74,10 @@ def main() -> int:
     passed = summary.get("passedTests", 0)
     failed = summary.get("failedTests", 0)
     skipped = summary.get("skippedTests", 0)
+    expected_failures = summary.get("expectedFailures", 0)
+    total = summary.get(
+        "totalTestCount", passed + failed + skipped + expected_failures
+    )
     cases = test_cases(tests.get("testNodes", []))
 
     label = "[PASS]" if result == "Passed" and failed == 0 else "[FAIL]"
@@ -86,9 +90,11 @@ def main() -> int:
     print(
         "  Result: "
         f"{styled(result, result_color(result), color)} | "
+        f"total={styled(total, 'cyan', color)} "
         f"passed={styled(passed, 'green', color)} "
         f"failed={styled(failed, 'red', color)} "
-        f"skipped={styled(skipped, 'yellow', color)}"
+        f"skipped={styled(skipped, 'yellow', color)} "
+        f"expected-failures={styled(expected_failures, 'yellow', color)}"
     )
     print(f"  Coverage: {styled(coverage or 'unavailable', 'cyan', color)}")
     print(f"  xcresult: {styled(args.result_bundle, 'cyan', color)}")

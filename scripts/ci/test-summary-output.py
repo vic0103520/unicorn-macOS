@@ -24,12 +24,17 @@ import os
 import sys
 result = os.environ.get('SUMMARY_RESULT', 'Passed')
 if 'summary' in sys.argv:
-    print(json.dumps({'result': result, 'passedTests': 2 if result == 'Passed' else 1,
-                      'failedTests': 0 if result == 'Passed' else 1, 'skippedTests': 1}))
+    print(json.dumps({'result': result, 'totalTestCount': 4,
+                      'passedTests': 2 if result == 'Passed' else 1,
+                      'failedTests': 0 if result == 'Passed' else 1,
+                      'skippedTests': 1, 'expectedFailures': 1}))
 elif 'tests' in sys.argv:
+    first_result = 'Passed' if result == 'Passed' else 'Failed'
     print(json.dumps({'testNodes': [{'nodeType': 'Test Suite', 'name': 'Suite', 'children': [
-        {'nodeType': 'Test Case', 'name': 'first()', 'result': 'Passed'},
-        {'nodeType': 'Test Case', 'name': 'second()', 'result': 'Skipped'}]}]}))
+        {'nodeType': 'Test Case', 'name': 'first()', 'result': first_result},
+        {'nodeType': 'Test Case', 'name': 'second()', 'result': 'Passed'},
+        {'nodeType': 'Test Case', 'name': 'third()', 'result': 'Skipped'},
+        {'nodeType': 'Test Case', 'name': 'knownIssue()', 'result': 'Expected Failure'}]}]}))
 elif 'xccov' in sys.argv:
     print('UnicornCore.framework 87.50% (14/16)')
 else:
@@ -52,8 +57,13 @@ else:
         result = self.run_summary("--no-color")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Passed             first()", result.stdout)
-        self.assertIn("Skipped            second()", result.stdout)
-        self.assertIn("Result: Passed | passed=2 failed=0 skipped=1", result.stdout)
+        self.assertIn("Passed             second()", result.stdout)
+        self.assertIn("Skipped            third()", result.stdout)
+        self.assertIn("Expected Failure   knownIssue()", result.stdout)
+        self.assertIn(
+            "Result: Passed | total=4 passed=2 failed=0 skipped=1 expected-failures=1",
+            result.stdout,
+        )
         self.assertIn("Coverage: UnicornCore.framework 87.50% (14/16)", result.stdout)
         self.assertIn("xcresult: result.xcresult", result.stdout)
         self.assertNotIn("\033[", result.stdout)
@@ -63,8 +73,10 @@ else:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("\033[1;32m[PASS]\033[0m", result.stdout)
         self.assertIn("configuration=\033[1;36mDebug\033[0m", result.stdout)
+        self.assertIn("total=\033[1;36m4\033[0m", result.stdout)
         self.assertIn("passed=\033[1;32m2\033[0m", result.stdout)
         self.assertIn("failed=\033[1;31m0\033[0m", result.stdout)
+        self.assertIn("expected-failures=\033[1;33m1\033[0m", result.stdout)
         self.assertIn("Coverage: \033[1;36m", result.stdout)
         self.assertIn("xcresult: \033[1;36m", result.stdout)
 
@@ -96,20 +108,27 @@ else:
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("[FAIL]", result.stdout)
-        self.assertIn("Result: Failed | passed=1 failed=1 skipped=1", result.stdout)
+        self.assertIn(
+            "Result: Failed | total=4 passed=1 failed=1 skipped=1 expected-failures=1",
+            result.stdout,
+        )
 
-    def test_test_execution_plan_ends_with_automatic_summary(self) -> None:
+    def test_quiet_test_automatically_prints_summary(self) -> None:
         result = subprocess.run(
-            ["make", "--dry-run", "--silent", "test", "NO_COLOR=1"],
+            ["make", "--silent", "test", "XCODEBUILD=true", "ARCHS=x86_64",
+             "APP_EXECUTABLE=/usr/bin/true", "NO_COLOR=1",
+             "TEST_ROOT=" + self.temp.name + "/complete"],
             cwd=ROOT,
+            env=self.env,
             text=True,
             capture_output=True,
-            check=True,
+            check=False,
         )
-        summary = f'scripts/ci/summarize-tests.py "{ROOT}/build/Test/Results/UnicornCoreTests.xcresult"'
-        self.assertIn(summary, result.stdout)
-        self.assertIn("--configuration Debug", result.stdout)
-        self.assertIn("--no-color", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("true clean test", result.stdout)
+        self.assertIn("[PASS] App build:", result.stdout)
+        self.assertIn("[PASS] Tests:", result.stdout)
+        self.assertIn("knownIssue()", result.stdout)
 
 
 if __name__ == "__main__":
