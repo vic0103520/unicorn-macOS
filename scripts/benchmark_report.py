@@ -16,6 +16,7 @@ from pathlib import Path
 ANSI_BOLD = "\033[1m"
 ANSI_CYAN = "\033[36m"
 ANSI_GREEN = "\033[32m"
+ANSI_RED = "\033[31m"
 ANSI_YELLOW = "\033[33m"
 ANSI_RESET = "\033[0m"
 
@@ -122,13 +123,15 @@ def render_human_summary(
     status = "PASS" if test_summary["result"] == "Passed" and passed == total else "FAIL"
 
     title = styled("UNICORN BENCHMARKS", ANSI_CYAN, use_color)
-    status_text = styled(status, ANSI_GREEN, use_color) if status == "PASS" else status
+    status_color = ANSI_GREEN if status == "PASS" else ANSI_RED
+    result = styled(f"{status}  {passed}/{total}", status_color, use_color)
+    configuration = (
+        f"{context['configuration']} · {context['hostArchitecture']} · "
+        f"{context['measurementIterations']} iterations"
+    )
     lines = [
-        f"{title}  {status_text}  {passed}/{total}",
-        (
-            f"{context['configuration']} · {context['hostArchitecture']} · "
-            f"{context['measurementIterations']} iterations"
-        ),
+        f"{title}  {result}",
+        styled(configuration, ANSI_CYAN, use_color),
         "",
     ]
 
@@ -164,7 +167,7 @@ def render_human_summary(
 
     headings = ("WORKLOAD", "WALL", "CPU", "PEAK MEMORY", "VARIATION")
     widths = [
-        max(len(headings[index]), *(len(row[index]) for row in rows))
+        max([len(headings[index])] + [len(row[index]) for row in rows])
         for index in range(len(headings))
     ]
 

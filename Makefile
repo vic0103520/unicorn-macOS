@@ -196,7 +196,6 @@ test-summary:
 	@printf '%b%s\n' "$(RESULT_LABEL)" " xcresult: path=$(TEST_RESULT_BUNDLE)"
 
 benchmark: benchmark-native
-	+@$(MAKE) --no-print-directory benchmark-summary
 
 benchmark-native:
 	@echo "Running UnicornCore benchmarks in Release on $(NATIVE_ARCH)..."
@@ -204,7 +203,10 @@ benchmark-native:
 	@mkdir -p "$(dir $(BENCHMARK_RESULT_BUNDLE))" "$(BENCHMARK_SUMMARY_DIR)"
 	@test ! -e "$(BENCHMARK_RESULT_BUNDLE)" || \
 		{ printf '%b%s\n' "$(FAIL_LABEL)" " Refusing stale benchmark result: path=$(BENCHMARK_RESULT_BUNDLE)"; exit 1; }
-	@if $(XCODEBUILD_COMMAND) test \
+	@build_log="$$(mktemp)" || \
+		{ printf '%b%s\n' "$(FAIL_LABEL)" " Core benchmarks: unable to create temporary build log"; exit 1; }; \
+	trap 'rm -f "$$build_log"' EXIT; \
+	if $(XCODEBUILD_COMMAND) test \
 		-project "$(XCODE_PROJECT)" \
 		-scheme "$(BENCHMARK_SCHEME)" \
 		-configuration Release \
@@ -218,13 +220,15 @@ benchmark-native:
 		OBJROOT="$(BENCHMARK_ROOT)/Intermediates" \
 		ARCHS="$(NATIVE_ARCH)" \
 		ONLY_ACTIVE_ARCH=YES \
-		$(XCODE_SIGNING_ARGS); then \
+		$(XCODE_SIGNING_ARGS) > "$$build_log" 2>&1; then \
 		:; \
 	else \
 		status=$$?; \
+		cat "$$build_log" >&2; \
 		printf '%b%s\n' "$(FAIL_LABEL)" " Core benchmarks: configuration=Release arch=$(NATIVE_ARCH) exit=$$status"; \
 		exit "$$status"; \
 	fi
+	+@$(MAKE) --no-print-directory benchmark-summary
 
 benchmark-summary:
 	@summary_tmp="$(BENCHMARK_XCODE_SUMMARY).tmp"; \

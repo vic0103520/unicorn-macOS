@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Focused tests for benchmark terminal report rendering."""
 
+import os
 import re
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 import benchmark_report
 
@@ -74,7 +78,8 @@ class BenchmarkReportTests(unittest.TestCase):
 
         self.assertEqual(ANSI_PATTERN.sub("", colored), plain)
         self.assertIn("\033[36mUNICORN BENCHMARKS\033[0m", colored)
-        self.assertIn("\033[32mPASS\033[0m", colored)
+        self.assertIn("\033[32mPASS  2/2\033[0m", colored)
+        self.assertIn("\033[36mRelease · arm64 · 5 iterations\033[0m", colored)
         self.assertIn("\033[1mIn-memory initialization\033[0m", colored)
         self.assertIn("Results: \033[36mbuild/Benchmark\033[0m", colored)
         self.assertIn("Thresholds: \033[33mnot enforced\033[0m", colored)
@@ -105,6 +110,102 @@ class BenchmarkReportTests(unittest.TestCase):
         self.assertFalse(
             benchmark_report.color_enabled(FakeStream(True), {"NO_COLOR": "0"})
         )
+
+    def test_failure_result_is_red(self) -> None:
+        self.report["xcodeTestSummary"]["result"] = "Failed"
+        colored = benchmark_report.render_human_summary(
+            self.report, "build/Benchmark", use_color=True
+        )
+        self.assertIn("\033[31mFAIL  2/2\033[0m", colored)
+
+
+class BenchmarkMakeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.tools = Path(self.temporary_directory.name) / "tools"
+        self.tools.mkdir()
+        self.xcodebuild = self.tools / "xcodebuild"
+        self.xcodebuild.write_text(
+            """#!/bin/sh
+if [ \"${FAIL_XCODEBUILD:-0}\" = 1 ]; then
+    echo 'actionable benchmark failure' >&2
+    exit 42
+fi
+while [ \"$#\" -gt 0 ]; do
+    if [ \"$1\" = '-resultBundlePath' ]; then
+        shift
+        mkdir -p \"$1\"
+    fi
+    shift
+done
+echo 'routine xcodebuild output'
+echo 'routine xcodebuild diagnostic' >&2
+"""
+        )
+        (self.tools / "xcrun").write_text(
+            """#!/bin/sh
+if [ \"$1\" = swift ]; then
+    echo 'Swift version test'
+elif [ \"$4\" = summary ]; then
+    printf '%s\\n' '{"result":"Passed","passedTests":7,"totalTestCount":7}'
+elif [ \"$4\" = metrics ]; then
+    printf '%s\\n' '[]'
+else
+    echo 'unexpected xcrun invocation' >&2
+    exit 1
+fi
+"""
+        )
+        for tool in (self.xcodebuild, self.tools / "xcrun"):
+            tool.chmod(0o755)
+
+    def run_make(self, target: str, fail: bool = False) -> subprocess.CompletedProcess:
+        benchmark_root = Path(self.temporary_directory.name) / target
+        environment = dict(os.environ)
+        environment["PATH"] = f"{self.tools}:{environment['PATH']}"
+        if fail:
+            environment["FAIL_XCODEBUILD"] = "1"
+        return subprocess.run(
+            [
+                "make",
+                "--no-print-directory",
+                target,
+                f"XCODEBUILD={self.xcodebuild}",
+                f"BENCHMARK_ROOT={benchmark_root}",
+                "NATIVE_ARCH=arm64",
+                "NO_COLOR=1",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+    def test_benchmark_targets_hide_routine_output_and_chain_summary(self) -> None:
+        for target in ("benchmark", "benchmark-native"):
+            with self.subTest(target=target):
+                result = self.run_make(target)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn("routine xcodebuild", result.stdout)
+                self.assertEqual(result.stdout.count("UNICORN BENCHMARKS  PASS  7/7"), 1)
+                self.assertIn("Release · arm64 · 5 iterations", result.stdout)
+                self.assertNotIn("\033[", result.stdout)
+                summary = (
+                    Path(self.temporary_directory.name)
+                    / target
+                    / "Summary/benchmark-summary.json"
+                )
+                self.assertTrue(summary.is_file())
+
+    def test_benchmark_failure_replays_actionable_build_output(self) -> None:
+        result = self.run_make("benchmark-native", fail=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("actionable benchmark failure", result.stdout)
+        self.assertIn("Core benchmarks: configuration=Release arch=arm64 exit=42", result.stdout)
+        self.assertNotIn("UNICORN BENCHMARKS", result.stdout)
 
 
 if __name__ == "__main__":

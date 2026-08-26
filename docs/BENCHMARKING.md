@@ -10,7 +10,7 @@ From the repository root, run:
 make benchmark
 ```
 
-The command deletes its dedicated benchmark directory before building, refuses to proceed if the result bundle path is still occupied, and runs only the `UnicornCorePerformanceTests` test plan. It compiles production `UnicornCore` in Release on the host's native architecture with coverage and parallel testing disabled. The performance target imports the module normally, without `@testable`. `make benchmark-native` and `make benchmark-summary` expose the reusable execution and reporting stages behind the canonical command.
+The command deletes its dedicated benchmark directory before building, refuses to proceed if the result bundle path is still occupied, and runs only the `UnicornCorePerformanceTests` test plan. It compiles production `UnicornCore` in Release on the host's native architecture with coverage and parallel testing disabled. The performance target imports the module normally, without `@testable`. Routine Xcode build output is hidden so the report remains easy to scan; if the build fails, its captured output is replayed before the failure summary. `make benchmark-native` exposes the reusable execution stage and automatically prints the same summary, while `make benchmark-summary` regenerates reporting from an existing result bundle.
 
 Do not use `make test` as a benchmark command. The ordinary `UnicornCoreTests` plan uses a Debug correctness build with coverage and contains only the correctness target. Conversely, the dedicated performance plan contains only the benchmark target, and `make benchmark` does not run the correctness suite.
 
