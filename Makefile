@@ -23,6 +23,14 @@ PASS_LABEL = $(if $(filter 1,$(NO_COLOR)),[PASS],\033[1;32m[PASS]\033[0m)
 FAIL_LABEL = $(if $(filter 1,$(NO_COLOR)),[FAIL],\033[1;31m[FAIL]\033[0m)
 RESULT_LABEL = $(if $(filter 1,$(NO_COLOR)),[RESULT],\033[1;36m[RESULT]\033[0m)
 
+define BENCHMARK_FAILURE
+if [ -t 1 ] && [ -z "$${CI+x}" ] && [ -z "$${NO_COLOR+x}" ]; then \
+	printf '\033[1;31m[FAIL]\033[0m %s\n' "$(1)"; \
+else \
+	printf '[FAIL] %s\n' "$(1)"; \
+fi
+endef
+
 SYMROOT ?= $(abspath $(BUILD_DIR))
 OBJROOT ?= $(SYMROOT)/obj
 NATIVE_ARCH ?= $(shell uname -m)
@@ -202,9 +210,9 @@ benchmark-native:
 	@rm -rf "$(BENCHMARK_ROOT)"
 	@mkdir -p "$(dir $(BENCHMARK_RESULT_BUNDLE))" "$(BENCHMARK_SUMMARY_DIR)"
 	@test ! -e "$(BENCHMARK_RESULT_BUNDLE)" || \
-		{ printf '%b%s\n' "$(FAIL_LABEL)" " Refusing stale benchmark result: path=$(BENCHMARK_RESULT_BUNDLE)"; exit 1; }
+		{ $(call BENCHMARK_FAILURE,Refusing stale benchmark result: path=$(BENCHMARK_RESULT_BUNDLE)); exit 1; }
 	@build_log="$$(mktemp)" || \
-		{ printf '%b%s\n' "$(FAIL_LABEL)" " Core benchmarks: unable to create temporary build log"; exit 1; }; \
+		{ $(call BENCHMARK_FAILURE,Core benchmarks: unable to create temporary build log); exit 1; }; \
 	trap 'rm -f "$$build_log"' EXIT; \
 	if $(XCODEBUILD_COMMAND) test \
 		-project "$(XCODE_PROJECT)" \
@@ -225,7 +233,7 @@ benchmark-native:
 	else \
 		status=$$?; \
 		cat "$$build_log" >&2; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " Core benchmarks: configuration=Release arch=$(NATIVE_ARCH) exit=$$status"; \
+		$(call BENCHMARK_FAILURE,Core benchmarks: configuration=Release arch=$(NATIVE_ARCH) exit=$$status); \
 		exit "$$status"; \
 	fi
 	+@$(MAKE) --no-print-directory benchmark-summary
@@ -242,7 +250,7 @@ benchmark-summary:
 		mv "$$metrics_tmp" "$(BENCHMARK_XCODE_METRICS)"; \
 	else \
 		status=$$?; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " Benchmark summary export: xcresult=$(BENCHMARK_RESULT_BUNDLE) exit=$$status"; \
+		$(call BENCHMARK_FAILURE,Benchmark summary export: xcresult=$(BENCHMARK_RESULT_BUNDLE) exit=$$status); \
 		exit "$$status"; \
 	fi
 	@if python3 scripts/benchmark_report.py \
@@ -254,7 +262,7 @@ benchmark-summary:
 		:; \
 	else \
 		status=$$?; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " Benchmark report: output=$(BENCHMARK_SUMMARY) exit=$$status"; \
+		$(call BENCHMARK_FAILURE,Benchmark report: output=$(BENCHMARK_SUMMARY) exit=$$status); \
 		exit "$$status"; \
 	fi
 

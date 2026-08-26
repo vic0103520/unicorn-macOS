@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Focused tests for benchmark terminal report rendering."""
 
+import errno
 import os
+import pty
 import re
 import subprocess
 import tempfile
@@ -160,28 +162,67 @@ fi
         for tool in (self.xcodebuild, self.tools / "xcrun"):
             tool.chmod(0o755)
 
-    def run_make(self, target: str, fail: bool = False) -> subprocess.CompletedProcess:
+    def run_make(
+        self,
+        target: str,
+        fail: bool = False,
+        interactive: bool = False,
+        environment_updates=None,
+    ) -> subprocess.CompletedProcess:
         benchmark_root = Path(self.temporary_directory.name) / target
         environment = dict(os.environ)
+        environment.pop("CI", None)
+        environment.pop("NO_COLOR", None)
         environment["PATH"] = f"{self.tools}:{environment['PATH']}"
+        environment.update(environment_updates or {})
         if fail:
             environment["FAIL_XCODEBUILD"] = "1"
-        return subprocess.run(
-            [
-                "make",
-                "--no-print-directory",
-                target,
-                f"XCODEBUILD={self.xcodebuild}",
-                f"BENCHMARK_ROOT={benchmark_root}",
-                "NATIVE_ARCH=arm64",
-                "NO_COLOR=1",
-            ],
+        command = [
+            "make",
+            "--no-print-directory",
+            target,
+            f"XCODEBUILD={self.xcodebuild}",
+            f"BENCHMARK_ROOT={benchmark_root}",
+            "NATIVE_ARCH=arm64",
+        ]
+        if not interactive:
+            return subprocess.run(
+                command,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+        master, slave = pty.openpty()
+        process = subprocess.Popen(
+            command,
             cwd=Path(__file__).resolve().parents[1],
             env=environment,
-            text=True,
-            stdout=subprocess.PIPE,
+            stdout=slave,
             stderr=subprocess.STDOUT,
-            check=False,
+        )
+        os.close(slave)
+        output = bytearray()
+        try:
+            while True:
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError as error:
+                    if error.errno == errno.EIO:
+                        break
+                    raise
+                if not chunk:
+                    break
+                output.extend(chunk)
+        finally:
+            os.close(master)
+        return subprocess.CompletedProcess(
+            command,
+            process.wait(),
+            output.decode(errors="replace"),
         )
 
     def test_benchmark_targets_hide_routine_output_and_chain_summary(self) -> None:
@@ -206,6 +247,23 @@ fi
         self.assertIn("actionable benchmark failure", result.stdout)
         self.assertIn("Core benchmarks: configuration=Release arch=arm64 exit=42", result.stdout)
         self.assertNotIn("UNICORN BENCHMARKS", result.stdout)
+        self.assertNotIn("\033[", result.stdout)
+
+    def test_benchmark_failure_color_respects_environment(self) -> None:
+        colored = self.run_make("benchmark-native", fail=True, interactive=True)
+        self.assertIn("\033[1;31m[FAIL]\033[0m", colored.stdout)
+
+        for environment in ({"CI": ""}, {"NO_COLOR": ""}, {"NO_COLOR": "0"}):
+            with self.subTest(environment=environment):
+                plain = self.run_make(
+                    "benchmark-native",
+                    fail=True,
+                    interactive=True,
+                    environment_updates=environment,
+                )
+                self.assertEqual(plain.returncode, 2)
+                self.assertIn("[FAIL] Core benchmarks", plain.stdout)
+                self.assertNotIn("\033[", plain.stdout)
 
 
 if __name__ == "__main__":
