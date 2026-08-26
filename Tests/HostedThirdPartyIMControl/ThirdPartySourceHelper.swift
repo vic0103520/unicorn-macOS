@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon
 import CoreGraphics
+import CoreServices
 import Foundation
 import SystemConfiguration
 
@@ -302,6 +303,28 @@ private func snapshot(label: String, outputPath: String) throws {
         "current": value["current"] as Any,
         "relevantSourceCount": value["relevantSourceCount"] as Any,
     ])
+}
+
+private func registerLaunchServices(
+    appPath: String, outputPath: String
+) throws -> Int32 {
+    let startedAt = timestamp()
+    let canonicalURL = URL(fileURLWithPath: appPath).standardizedFileURL
+    let status = LSRegisterURL(canonicalURL as CFURL, true)
+    let result: [String: Any] = [
+        "schemaVersion": 3,
+        "operation": "LSRegisterURL",
+        "publicCoreServicesAPI": true,
+        "recursive": true,
+        "startedAt": startedAt,
+        "completedAt": timestamp(),
+        "appPath": appPath,
+        "canonicalAppURL": canonicalURL.path,
+        "status": status,
+    ]
+    try writeJSON(result, path: outputPath)
+    printJSON(result)
+    return status == noErr ? 0 : 3
 }
 
 private func register(appPath: String, outputPath: String) throws -> Int32 {
@@ -819,7 +842,7 @@ private func cleanupSources(statePath: String, outputPath: String) throws -> Int
 
 private func usage() -> Never {
     fputs(
-        "usage: ThirdPartySourceHelper session OUT | sources LABEL OUT | register APP OUT | enable ID TYPE OUT | select ID TYPE PARENT_OR_DASH OUT | menu-select ID NAME CURRENT_NAME OUT | post-key KEYCODE LABEL OUT | cleanup-sources STATE OUT\n",
+        "usage: ThirdPartySourceHelper session OUT | sources LABEL OUT | register APP OUT | ls-register APP OUT | enable ID TYPE OUT | select ID TYPE PARENT_OR_DASH OUT | menu-select ID NAME CURRENT_NAME OUT | post-key KEYCODE LABEL OUT | cleanup-sources STATE OUT\n",
         stderr
     )
     exit(64)
@@ -839,6 +862,10 @@ do {
         status = 0
     case "register" where arguments.count == 4:
         status = try register(appPath: arguments[2], outputPath: arguments[3])
+    case "ls-register" where arguments.count == 4:
+        status = try registerLaunchServices(
+            appPath: arguments[2], outputPath: arguments[3]
+        )
     case "enable" where arguments.count == 5:
         status = try enable(
             targetID: arguments[2], expectedType: arguments[3], outputPath: arguments[4]

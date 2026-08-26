@@ -14,11 +14,16 @@ SQUIRREL="$INSTALLED_APP/Contents/MacOS/Squirrel"
 ASSET_URL="https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg"
 ASSET_SHA256="614746013212937623d5bbab9901e9c43d1ec937aa32307d6b6092a05e308287"
 PRODUCER_EXIT="$EVIDENCE/producer-exit-code.txt"
+EXPERIMENT="${SQUIRREL_EXPERIMENT:-third-party-squirrel-control}"
+case "$EXPERIMENT" in
+    third-party-squirrel-control|squirrel-automatic-baseline|squirrel-automatic-ls-refresh) ;;
+    *) printf 'Unsupported SQUIRREL_EXPERIMENT: %s\n' "$EXPERIMENT" >&2; exit 64 ;;
+esac
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$EVIDENCE" "$BIN" "$CLIENT_APP/Contents/MacOS"
 python3 "$ROOT/Tests/HostedThirdPartyIMControl/control.py" \
-    init "$EVIDENCE" "$INSTALLED_APP"
+    init "$EVIDENCE" "$INSTALLED_APP" "$EXPERIMENT"
 
 record_phase() {
     local phase="$1"
@@ -124,6 +129,7 @@ xcrun swiftc \
     -framework ApplicationServices \
     -framework Carbon \
     -framework CoreGraphics \
+    -framework CoreServices \
     -framework Foundation \
     -framework SystemConfiguration \
     -o "$HELPER"
@@ -308,5 +314,5 @@ value["selectionStarted"] = True
 path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 PY
 python3 "$ROOT/Tests/HostedThirdPartyIMControl/control.py" \
-    run "$EVIDENCE" "$HELPER" "$CLIENT_APP" "$INSTALLED_APP"
+    run "$EVIDENCE" "$HELPER" "$CLIENT_APP" "$INSTALLED_APP" "$EXPERIMENT"
 record_phase "register-approve-direct-launch-select-and-compose" "completed"

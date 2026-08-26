@@ -11,7 +11,6 @@ import json
 import os
 import pathlib
 import plistlib
-import shutil
 import subprocess
 import sys
 import time
@@ -47,6 +46,10 @@ VERIFIED_ACTIVATION_FAILURE_RUN_URL = (
     "https://github.com/vic0103520/unicorn-macOS/actions/runs/32830534336"
 )
 DIRECT_LAUNCH_DEADLINE_SECONDS = 20
+AUTOMATIC_LAUNCH_DEADLINE_SECONDS = 15
+DIRECT_EXPERIMENT = "third-party-squirrel-control"
+AUTOMATIC_BASELINE_EXPERIMENT = "squirrel-automatic-baseline"
+AUTOMATIC_LS_REFRESH_EXPERIMENT = "squirrel-automatic-ls-refresh"
 
 
 def load_json(path: pathlib.Path, default: Any = None) -> Any:
@@ -65,7 +68,9 @@ def github_run_url() -> str | None:
     return None
 
 
-def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
+def initialize(
+    evidence: pathlib.Path, installed_app: pathlib.Path, experiment: str
+) -> None:
     evidence.mkdir(parents=True, exist_ok=True)
     tracked_paths = [
         installed_app,
@@ -92,7 +97,8 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
         evidence / "summary.json",
         {
             "schemaVersion": SCHEMA_VERSION,
-            "probe": "github-hosted-arm64-squirrel-direct-launch-counterfactual",
+            "probe": "github-hosted-arm64-squirrel-activation-experiment",
+            "experiment": experiment,
             "status": "running",
             "startedAt": shared.timestamp(),
             "actionsRunURL": github_run_url(),
@@ -101,7 +107,15 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
                 "expectedArchitecture": "arm64",
                 "sourcesUnderDiagnosis": [DVORAK_ID, BUNDLE_ID],
                 "primaryCounterfactualCount": 1,
-                "primaryCounterfactual": "direct execution of the exact signed Squirrel executable as runner",
+                "primaryCounterfactual": (
+                    "direct execution of the exact signed Squirrel executable as runner"
+                    if experiment == DIRECT_EXPERIMENT
+                    else (
+                        "narrow LaunchServices registration and bounded cache convergence"
+                        if experiment == AUTOMATIC_LS_REFRESH_EXPERIMENT
+                        else "fresh-runner extracted-app automatic activation baseline"
+                    )
+                ),
                 "thirdPartyProductCount": 1,
                 "thirdPartyProduct": "official Rime Squirrel 1.1.2",
                 "screenshotsDiagnosticOnly": True,
@@ -140,17 +154,23 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
                     "focused AppKit client and deterministic nihao-space composition proof",
                 ],
             },
-            "smallestCounterfactual": {
-                "transition": "After the verified setup and exact approval sequence, execute the no-argument signed Squirrel executable directly as runner, wait a bounded deadline for the exact PID and setIMKXPCEndpoint, then select Hans and compose only if both boundaries pass.",
-                "whySmallest": "Only the automatic LaunchServices/imklaunchagent startup boundary is bypassed. The product, payload, user, path, provenance, registration, data, approval, source, client, and physical events remain unchanged.",
-                "explicitOutcomes": [
-                    "process exits before endpoint",
-                    "process lives but no endpoint",
-                    "process lives plus endpoint but composition fails",
-                    "process lives, endpoint registers, and composition succeeds",
-                ],
-                "causalClaimLimit": "Success isolates automatic LaunchServices/session resolution. Exit or no endpoint reports only the earliest observed application boundary.",
-            },
+            "smallestCounterfactual": (
+                {
+                    "transition": "After the verified setup and exact approval sequence, execute the no-argument signed Squirrel executable directly as runner, wait a bounded deadline for the exact PID and setIMKXPCEndpoint, then select Hans and compose only if both boundaries pass.",
+                    "whySmallest": "Only the automatic LaunchServices/imklaunchagent startup boundary is bypassed. The product, payload, user, path, provenance, registration, data, approval, source, client, and physical events remain unchanged.",
+                    "causalClaimLimit": "Success isolates automatic LaunchServices/session resolution. Exit or no endpoint reports only the earliest observed application boundary.",
+                }
+                if experiment == DIRECT_EXPERIMENT
+                else {
+                    "transition": (
+                        "Apply narrow exact-app LaunchServices registration and an eight-second same-session convergence wait before automatic activation."
+                        if experiment == AUTOMATIC_LS_REFRESH_EXPERIMENT
+                        else "Reproduce automatic activation from a fresh runner with the verified extracted app in the conventional per-user Input Methods location and no direct execution."
+                    ),
+                    "whySmallest": "The app, provenance, location, data, approval, source, client, and physical events match the proven control; only the named arm condition changes.",
+                    "causalClaimLimit": "Success proves the changed treatment sufficient relative to the fresh baseline; failure reports only the earliest observed boundary.",
+                }
+            ),
             "assertions": {
                 "dvorakPhysicalKey": {
                     "keyCode": 37,
@@ -1136,6 +1156,420 @@ def finish_direct_launch(
     return result
 
 
+def launchservices_refresh_treatment(
+    evidence: pathlib.Path, installed_app: pathlib.Path, helper: pathlib.Path
+) -> dict[str, Any]:
+    started_at = shared.timestamp()
+    app_url = str(installed_app.resolve())
+    result_path = evidence / "launchservices-register.json"
+    register_command = [str(helper), "ls-register", app_url, str(result_path)]
+    treatment = {
+        "startedAt": started_at,
+        "changedCondition": "supported narrow LaunchServices registration plus bounded same-session cache convergence wait",
+        "commands": {
+            "publicLSRegisterURLExactApp": shared.run_command(
+                register_command, timeout=30
+            ),
+        },
+        "launchServicesResult": load_json(result_path, {}),
+        "privateDatabaseEdited": False,
+        "broadServiceRestarted": False,
+        "executablePrelaunched": False,
+        "appPath": str(installed_app),
+        "canonicalAppURL": app_url,
+        "waitSeconds": 8,
+        "sourceSnapshots": [],
+        "processSnapshots": [],
+    }
+    for index in range(5):
+        treatment["sourceSnapshots"].append(
+            source_snapshot(
+                helper,
+                evidence,
+                f"input-sources-ls-convergence-{index + 1}.json",
+                f"launchservices-convergence-{index + 1}",
+            )
+        )
+        treatment["processSnapshots"].append(process_snapshot())
+        if index < 4:
+            time.sleep(2)
+    treatment["completedAt"] = shared.timestamp()
+    treatment["elapsedSeconds"] = (
+        parse_timestamp(treatment["completedAt"])
+        - parse_timestamp(started_at)
+    ).total_seconds()
+    write_json(evidence / "launchservices-treatment.json", treatment)
+    return treatment
+
+
+def automatic_activation_proof(
+    driver: Any,
+    helper: pathlib.Path,
+    client_app: pathlib.Path,
+    evidence: pathlib.Path,
+    name: str,
+    trigger_started_at: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "startedAt": trigger_started_at or shared.timestamp(),
+        "attempted": True,
+        "initiatingTrigger": "exact Hans TIS selection followed by focused AppKit client activation and physical nihao-space input",
+        "directExecutableLaunchPerformed": False,
+        "deadlineSeconds": AUTOMATIC_LAUNCH_DEADLINE_SECONDS,
+        "diagnosticReportsBefore": diagnostic_reports(),
+    }
+    session_id: str | None = None
+    try:
+        session_id, diagnostics, timeline_path = create_client_session(
+            driver, client_app, evidence, name
+        )
+        element = shared.find_text_view(driver, session_id)
+        result["focus"] = shared.focus_text_view(
+            driver, session_id, element, diagnostics
+        )
+        result["sourceAtTrigger"] = source_snapshot(
+            helper,
+            evidence,
+            f"input-sources-at-{name}-automatic-trigger.json",
+            f"source-at-{name}-automatic-trigger",
+        )
+        key_specs = [
+            (45, "n"),
+            (34, "i"),
+            (4, "h"),
+            (0, "a"),
+            (31, "o"),
+            (49, "space"),
+        ]
+        keys: list[dict[str, Any]] = []
+        deadline = time.monotonic() + AUTOMATIC_LAUNCH_DEADLINE_SECONDS
+        for index, (key_code, label) in enumerate(key_specs, start=1):
+            key_path = evidence / f"key-{name}-{index}-{label}.json"
+            command = shared.run_command(
+                [str(helper), "post-key", str(key_code), label, str(key_path)],
+                timeout=15,
+            )
+            time.sleep(0.5)
+            keys.append(
+                {
+                    "index": index,
+                    "label": label,
+                    "keyCode": key_code,
+                    "command": command,
+                    "event": load_json(key_path, {}),
+                    "clientDiagnosticsAfter": shared.diagnostics_snapshot(
+                        diagnostics
+                    ),
+                    "processAfter": process_snapshot(),
+                }
+            )
+        process_observations: list[dict[str, Any]] = []
+        while time.monotonic() < deadline:
+            snapshot = process_snapshot()
+            process_observations.append(snapshot)
+            current = shared.diagnostics_snapshot(diagnostics)
+            if (
+                snapshot.get("processCount", 0) > 0
+                and current.get("textScalars") == EXPECTED_SCALARS
+            ):
+                break
+            time.sleep(0.5)
+        completed_at = shared.timestamp()
+        logs = capture_tis_log_window(
+            evidence, f"automatic-activation-{name}", result["startedAt"], completed_at
+        )
+        final_diagnostics = shared.diagnostics_snapshot(diagnostics)
+        timeline = timeline_entries(timeline_path)
+        marked = [entry for entry in timeline if entry.get("hasMarkedText") is True]
+        exact_pids = sorted(
+            {
+                pid
+                for observation in process_observations
+                for pid in observation.get("pids", [])
+            }
+            | {
+                pid
+                for key in keys
+                for pid in key["processAfter"].get("pids", [])
+            }
+        )
+        process_observed = len(exact_pids) == 1
+        correlated_endpoint_events = [
+            event
+            for pid in exact_pids
+            for event in endpoint_events(evidence / logs["logPath"], int(pid))
+        ]
+        endpoint_observed = bool(correlated_endpoint_events) and process_observed
+        boundary_logs = capture_direct_log_show(
+            evidence,
+            result["startedAt"],
+            completed_at,
+            int(exact_pids[0]) if len(exact_pids) == 1 else None,
+        )
+        reports_after = diagnostic_reports()
+        before_paths = {
+            item["path"] for item in result["diagnosticReportsBefore"]
+        }
+        new_reports = [
+            item for item in reports_after if item["path"] not in before_paths
+        ]
+        retained_reports: list[dict[str, Any]] = []
+        for index, item in enumerate(new_reports, start=1):
+            source = pathlib.Path(str(item["path"]))
+            destination = evidence / f"automatic-activation-crash-{index}{source.suffix}"
+            try:
+                with source.open("rb") as handle:
+                    destination.write_bytes(handle.read(1_048_576))
+                retained_reports.append(
+                    {
+                        **item,
+                        "retainedPath": destination.name,
+                        "retainedByteLimit": 1_048_576,
+                    }
+                )
+            except OSError as error:
+                retained_reports.append({**item, "retentionError": str(error)})
+        composition_ended = (
+            final_diagnostics.get("hasMarkedText") is False
+            and (final_diagnostics.get("markedRange") or {}).get("length") == 0
+        )
+        exact_text = final_diagnostics.get("textScalars") == EXPECTED_SCALARS
+        success = (
+            current_id(result["sourceAtTrigger"]) == MODE_ID
+            and process_observed
+            and endpoint_observed
+            and exact_text
+            and composition_ended
+        )
+        result.update(
+            {
+                "completedAt": completed_at,
+                "keys": keys,
+                "processObservations": process_observations,
+                "automaticProcessPIDs": exact_pids,
+                "automaticProcessObserved": process_observed,
+                "exactAutomaticProcessCount": len(exact_pids),
+                "endpointEvents": correlated_endpoint_events,
+                "correlatedEndpointObserved": endpoint_observed,
+                "systemBoundaryLogs": boundary_logs,
+                "diagnosticReportsAfter": reports_after,
+                "newDiagnosticReports": retained_reports,
+                "markedCompositionObserved": bool(marked),
+                "markedCompositionSamples": marked[:8],
+                "finalClientDiagnostics": final_diagnostics,
+                "sourceSelectedAtTrigger": current_id(result["sourceAtTrigger"])
+                == MODE_ID,
+                "compositionEnded": composition_ended,
+                "exactTextAssertionPassed": exact_text,
+                "automaticActivationSucceeded": success,
+                "logs": logs,
+                "boundedIMKLaunchEvidence": bounded_imk_log_evidence(
+                    evidence / logs["logPath"]
+                ),
+            }
+        )
+        if len(exact_pids) == 1:
+            state_path = evidence / "installation-state.json"
+            state = load_json(state_path, {})
+            state["directLaunch"] = {
+                "pid": int(exact_pids[0]),
+                "executablePath": str(
+                    pathlib.Path.home()
+                    / "Library"
+                    / "Input Methods"
+                    / "Squirrel.app"
+                    / "Contents"
+                    / "MacOS"
+                    / EXECUTABLE_NAME
+                ),
+                "launchedAt": result["startedAt"],
+                "launchedByUID": os.getuid(),
+                "launchMethod": "automatic InputMethodKit activation",
+            }
+            write_json(state_path, state)
+    except Exception as error:
+        result["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
+        }
+        result["automaticActivationSucceeded"] = False
+    finally:
+        if session_id:
+            try:
+                driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                result["sessionDeleted"] = True
+            except Exception as error:
+                result["sessionDeleteError"] = shared.bounded(str(error))
+    result.setdefault("completedAt", shared.timestamp())
+    write_json(evidence / f"automatic-activation-{name}.json", result)
+    return result
+
+
+def run_automatic_control(
+    evidence: pathlib.Path,
+    helper: pathlib.Path,
+    client_app: pathlib.Path,
+    installed_app: pathlib.Path,
+    experiment: str,
+) -> int:
+    if experiment not in {
+        AUTOMATIC_BASELINE_EXPERIMENT,
+        AUTOMATIC_LS_REFRESH_EXPERIMENT,
+    }:
+        raise ValueError(f"unsupported automatic experiment: {experiment}")
+    report: dict[str, Any] = {
+        "startedAt": shared.timestamp(),
+        "experiment": experiment,
+        "primaryCounterfactualCount": 1,
+        "stageOrder": [
+            "Dvorak selection, focus, and event control",
+            "Squirrel exact-path registration and parent/mode enablement",
+            "semantic exact Allow action",
+            "optional narrow supported LaunchServices refresh treatment",
+            "exact Hans selection and client activation without direct execution",
+            "automatic process, endpoint, marked-text, and committed-text proof",
+        ],
+        "server": {},
+    }
+    appium_process = None
+    appium_handle = None
+    completed = False
+    try:
+        driver, appium_process, appium_handle, report["server"] = start_appium(
+            evidence
+        )
+        if not report["server"]["readiness"].get("ready"):
+            raise RuntimeError("Appium server did not become ready")
+        initial = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-before-dvorak-control.json",
+            "before-same-session-dvorak-control",
+        )
+        report["initialSources"] = initial
+        update_initial_dvorak_state(evidence, initial)
+        report["dvorakEnable"] = native_transition(
+            helper, evidence, "dvorak-enable", ["enable", DVORAK_ID, LAYOUT_TYPE]
+        )
+        report["dvorakPublicSelection"] = native_transition(
+            helper,
+            evidence,
+            "dvorak-public-selection",
+            ["select", DVORAK_ID, LAYOUT_TYPE, "-"],
+        )
+        report["dvorakPublicKeyProof"] = dvorak_key_proof(
+            driver, helper, client_app, evidence, "public-api"
+        )
+        original_id = str(
+            nested(
+                initial, "data", "current", "inputSourceID", default=US_ID
+            )
+        )
+        original_type = str(
+            nested(
+                initial, "data", "current", "type", default=LAYOUT_TYPE
+            )
+        )
+        report["restoreOriginalAfterDvorakControl"] = native_transition(
+            helper,
+            evidence,
+            "restore-original-after-dvorak-control",
+            ["select", original_id, original_type, "-"],
+        )
+        report["squirrelRegistration"] = native_transition(
+            helper,
+            evidence,
+            "squirrel-registration",
+            ["register", str(installed_app)],
+        )
+        report["squirrelParentEnable"] = native_transition(
+            helper,
+            evidence,
+            "squirrel-parent-enable",
+            ["enable", PARENT_ID, PARENT_TYPE],
+        )
+        report["squirrelModeEnable"] = native_transition(
+            helper,
+            evidence,
+            "squirrel-mode-enable",
+            ["enable", MODE_ID, MODE_TYPE],
+        )
+        report["systemSettingsApproval"] = approve_system_settings(
+            driver, helper, evidence
+        )
+        report["sameSessionBoundary"] = {
+            "recordedAt": shared.timestamp(),
+            "uid": os.getuid(),
+            "user": os.environ.get("USER"),
+            "canonicalAppURL": str(installed_app.resolve()),
+            "appExecutable": str(
+                installed_app / "Contents" / "MacOS" / EXECUTABLE_NAME
+            ),
+            "processBeforeTreatmentOrSelection": process_snapshot(),
+            "environmentEvidence": load_json(evidence / "environment.json", {}),
+            "aquaEvidence": load_json(evidence / "aqua-session.json", {}),
+        }
+        if experiment == AUTOMATIC_LS_REFRESH_EXPERIMENT:
+            report["launchServicesTreatment"] = launchservices_refresh_treatment(
+                evidence, installed_app, helper
+            )
+        else:
+            report["launchServicesTreatment"] = {
+                "performed": False,
+                "changedCondition": "none: exact extracted-app automatic-launch baseline",
+            }
+        preselection = process_snapshot()
+        if preselection.get("processCount") != 0:
+            raise RuntimeError(
+                "Squirrel was unexpectedly running before automatic activation"
+            )
+        report["squirrelPublicSelection"] = native_transition(
+            helper,
+            evidence,
+            "squirrel-public-selection-automatic",
+            ["select", MODE_ID, MODE_TYPE, PARENT_ID],
+        )
+        report["automaticActivation"] = automatic_activation_proof(
+            driver,
+            helper,
+            client_app,
+            evidence,
+            experiment,
+            nested(
+                report,
+                "squirrelPublicSelection",
+                "data",
+                "startedAt",
+            ),
+        )
+        report["finalSourcesBeforeCleanup"] = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-final-before-cleanup.json",
+            "final-state-before-unconditional-cleanup",
+        )
+        completed = True
+    except Exception as error:
+        report["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
+            "timestamp": shared.timestamp(),
+        }
+    finally:
+        if appium_process is not None and appium_handle is not None:
+            stop_appium(appium_process, appium_handle, report["server"])
+    report["completedAt"] = shared.timestamp()
+    report["executionCompleted"] = completed
+    write_json(evidence / "control-experiment.json", report)
+    summary = load_json(evidence / "summary.json", {})
+    summary["controlExperimentEvidencePath"] = "control-experiment.json"
+    summary["experimentExecutionCompleted"] = completed
+    if not completed:
+        summary["status"] = "execution-failed"
+    write_json(evidence / "summary.json", summary)
+    return 0 if completed else 3
+
+
 def timeline_entries(path: pathlib.Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     try:
@@ -1379,9 +1813,15 @@ def run_control(
     helper: pathlib.Path,
     client_app: pathlib.Path,
     installed_app: pathlib.Path,
+    experiment: str,
 ) -> int:
+    if experiment != DIRECT_EXPERIMENT:
+        return run_automatic_control(
+            evidence, helper, client_app, installed_app, experiment
+        )
     report: dict[str, Any] = {
         "startedAt": shared.timestamp(),
+        "experiment": experiment,
         "stageOrder": [
             "same-session Dvorak public selection and physical-event control",
             "verified Squirrel registration, exact parent/mode enablement, and exact Allow action",
@@ -1592,9 +2032,76 @@ def relevant_source(snapshot: dict[str, Any], source_id: str) -> dict[str, Any]:
     )
 
 
+def automatic_final_diagnosis(
+    summary: dict[str, Any], report: dict[str, Any]
+) -> dict[str, Any]:
+    experiment = report.get("experiment") or summary.get("experiment")
+    activation = report.get("automaticActivation", {})
+    selection = nested(report, "squirrelPublicSelection", "data", default={})
+    treatment = report.get("launchServicesTreatment", {})
+    success = activation.get("automaticActivationSucceeded") is True
+    process_observed = activation.get("automaticProcessObserved") is True
+    endpoint_observed = activation.get("correlatedEndpointObserved") is True
+    exact_text = activation.get("exactTextAssertionPassed") is True
+    if success:
+        earliest = "none through automatic process launch, endpoint registration, and deterministic composition"
+        conclusion = (
+            "The treatment was sufficient for automatic Squirrel activation: exact Hans selection and AppKit client activation started one exact Squirrel process, established its correlated endpoint, and committed the expected text without direct execution."
+        )
+    elif not process_observed:
+        earliest = "automatic application process creation"
+        conclusion = (
+            "Automatic activation failed before exact Squirrel process creation. No downstream endpoint or composition cause is asserted."
+        )
+    elif not endpoint_observed:
+        earliest = "automatic IMK endpoint registration"
+        conclusion = (
+            "Automatic activation created the exact Squirrel process but no correlated endpoint was observed by the bounded deadline."
+        )
+    else:
+        earliest = "composition after automatic process and endpoint activation"
+        conclusion = (
+            "Automatic activation created Squirrel and established a correlated endpoint, but deterministic composition did not commit the expected text."
+        )
+    return {
+        "experiment": experiment,
+        "initiatingTrigger": activation.get("initiatingTrigger"),
+        "changedCondition": treatment.get("changedCondition"),
+        "automaticActivationSucceeded": success,
+        "automaticProcessObserved": process_observed,
+        "automaticProcessPIDs": activation.get("automaticProcessPIDs", []),
+        "correlatedEndpointObserved": endpoint_observed,
+        "markedCompositionObserved": activation.get("markedCompositionObserved"),
+        "committedTextScalars": nested(
+            activation, "finalClientDiagnostics", "textScalars", default=[]
+        ),
+        "expectedTextScalars": EXPECTED_SCALARS,
+        "exactTextAssertionPassed": exact_text,
+        "selectionStatus": selection.get("status"),
+        "selectionVerified": selection.get("selectionVerified") is True,
+        "earliestMeaningfulDivergence": earliest,
+        "conclusion": conclusion,
+        "directExecutableLaunchPerformed": False,
+        "sameAquaUserBoundaryRetained": True,
+        "dvorakControlPassed": nested(
+            report, "dvorakPublicKeyProof", "passed"
+        )
+        is True,
+        "privateDatabaseEdited": False,
+        "causeClaimLimit": (
+            "A successful arm proves only that its changed condition is sufficient relative to the reproduced baseline. A failed arm reports the earliest observed boundary without assigning a deeper cause."
+        ),
+    }
+
+
 def final_diagnosis(
     summary: dict[str, Any], report: dict[str, Any]
 ) -> dict[str, Any]:
+    if report.get("experiment") in {
+        AUTOMATIC_BASELINE_EXPERIMENT,
+        AUTOMATIC_LS_REFRESH_EXPERIMENT,
+    }:
+        return automatic_final_diagnosis(summary, report)
     direct = report.get("directLaunch", {})
     outcome = direct.get("outcome") or {
         "classification": "not-established",
@@ -1773,6 +2280,7 @@ def main() -> int:
     init_parser = commands.add_parser("init")
     init_parser.add_argument("evidence", type=pathlib.Path)
     init_parser.add_argument("installed_app", type=pathlib.Path)
+    init_parser.add_argument("experiment")
 
     preflight_parser = commands.add_parser("preflight")
     preflight_parser.add_argument("evidence", type=pathlib.Path)
@@ -1788,6 +2296,7 @@ def main() -> int:
     run_parser.add_argument("helper", type=pathlib.Path)
     run_parser.add_argument("client_app", type=pathlib.Path)
     run_parser.add_argument("installed_app", type=pathlib.Path)
+    run_parser.add_argument("experiment")
 
     finalize_parser = commands.add_parser("finalize")
     finalize_parser.add_argument("evidence", type=pathlib.Path)
@@ -1795,7 +2304,9 @@ def main() -> int:
 
     arguments = parser.parse_args()
     if arguments.command == "init":
-        initialize(arguments.evidence, arguments.installed_app)
+        initialize(
+            arguments.evidence, arguments.installed_app, arguments.experiment
+        )
         return 0
     if arguments.command == "preflight":
         preflight(arguments.evidence, arguments.helper)
@@ -1808,6 +2319,7 @@ def main() -> int:
             arguments.helper,
             arguments.client_app,
             arguments.installed_app,
+            arguments.experiment,
         )
     if arguments.command == "finalize":
         finalize(arguments.evidence, arguments.producer_status)

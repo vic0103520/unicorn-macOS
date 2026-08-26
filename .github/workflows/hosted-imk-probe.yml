@@ -11,6 +11,8 @@ on:
         options:
           - disposable-unicorn
           - third-party-squirrel-control
+          - squirrel-automatic-baseline
+          - squirrel-automatic-ls-refresh
 
 permissions:
   contents: read
@@ -55,8 +57,8 @@ jobs:
           retention-days: 14
 
   third-party-input-method-control:
-    name: macOS 15 ARM64 Squirrel direct-launch counterfactual
-    if: inputs.experiment == 'third-party-squirrel-control'
+    name: macOS 15 ARM64 bounded Squirrel activation experiment
+    if: contains(fromJSON('["third-party-squirrel-control", "squirrel-automatic-baseline", "squirrel-automatic-ls-refresh"]'), inputs.experiment)
     runs-on: macos-15
     timeout-minutes: 30
 
@@ -64,8 +66,10 @@ jobs:
       - name: Check out trusted branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Run bounded Squirrel direct-launch counterfactual
+      - name: Run bounded Squirrel activation experiment
         id: producer
+        env:
+          SQUIRREL_EXPERIMENT: ${{ inputs.experiment }}
         run: Tests/HostedThirdPartyIMControl/run.sh
 
       - name: Restore the original source and remove temporary Squirrel state
@@ -83,7 +87,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: hosted-arm64-squirrel-direct-launch-${{ github.run_id }}-${{ github.run_attempt }}
+          name: hosted-arm64-${{ inputs.experiment }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/HostedThirdPartyIMControl/evidence
           if-no-files-found: error
           retention-days: 14
