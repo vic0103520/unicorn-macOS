@@ -330,7 +330,12 @@ PY
 fi
 
 record_phase "prepare-official-input-method-data" "started"
-python3 - "$SQUIRREL" "$INSTALLED_APP/Contents/SharedSupport" "$EVIDENCE/squirrel-build.log" <<'PY'
+if [[ "$EXPERIMENT" == "squirrel-official-installer" ]]; then
+    printf '%s\n' \
+        'Rime prebuild was executed by the pinned package postinstall as part of the single installer treatment; no second build command was run.' \
+        >"$EVIDENCE/squirrel-build.log"
+else
+    python3 - "$SQUIRREL" "$INSTALLED_APP/Contents/SharedSupport" "$EVIDENCE/squirrel-build.log" <<'PY'
 import pathlib
 import subprocess
 import sys
@@ -350,6 +355,7 @@ with log_path.open("w") as log:
 if completed.returncode != 0:
     raise SystemExit(f"Squirrel --build returned {completed.returncode}")
 PY
+fi
 "$HELPER" sources "after-build-before-registration" \
     "$EVIDENCE/input-sources-after-build-before-registration.json" \
     >"$EVIDENCE/input-sources-after-build-command.log" 2>&1
