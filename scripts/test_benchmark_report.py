@@ -182,6 +182,7 @@ fi
         fail: bool = False,
         interactive: bool = False,
         environment_updates=None,
+        make_variables=None,
     ) -> subprocess.CompletedProcess:
         benchmark_root = Path(self.temporary_directory.name) / target
         environment = dict(os.environ)
@@ -199,6 +200,7 @@ fi
             f"BENCHMARK_ROOT={benchmark_root}",
             "NATIVE_ARCH=arm64",
         ]
+        command.extend(make_variables or [])
         if not interactive:
             return subprocess.run(
                 command,
@@ -260,6 +262,29 @@ fi
                     / "Summary/benchmark-summary.json"
                 )
                 self.assertTrue(summary.is_file())
+
+    def test_standalone_summary_creates_configured_output_directories(self) -> None:
+        root = Path(self.temporary_directory.name) / "standalone"
+        result_bundle = root / "existing/Benchmark.xcresult"
+        result_bundle.mkdir(parents=True)
+        xcode_summary = root / "exports/summary/xcode.json"
+        xcode_metrics = root / "exports/metrics/xcode.json"
+        benchmark_summary = root / "reports/final/benchmark.json"
+
+        result = self.run_make(
+            "benchmark-summary",
+            make_variables=[
+                f"BENCHMARK_RESULT_BUNDLE={result_bundle}",
+                f"BENCHMARK_XCODE_SUMMARY={xcode_summary}",
+                f"BENCHMARK_XCODE_METRICS={xcode_metrics}",
+                f"BENCHMARK_SUMMARY={benchmark_summary}",
+            ],
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(xcode_summary.is_file())
+        self.assertTrue(xcode_metrics.is_file())
+        self.assertTrue(benchmark_summary.is_file())
 
     def test_benchmark_failure_replays_actionable_build_output(self) -> None:
         result = self.run_make("benchmark-native", fail=True)

@@ -239,6 +239,9 @@ benchmark-native:
 	+@$(MAKE) --no-print-directory benchmark-summary
 
 benchmark-summary:
+	@mkdir -p "$(dir $(BENCHMARK_XCODE_SUMMARY))" \
+		"$(dir $(BENCHMARK_XCODE_METRICS))" \
+		"$(dir $(BENCHMARK_SUMMARY))"
 	@summary_tmp="$(BENCHMARK_XCODE_SUMMARY).tmp"; \
 	metrics_tmp="$(BENCHMARK_XCODE_METRICS).tmp"; \
 	trap 'rm -f "$$summary_tmp" "$$metrics_tmp"' EXIT; \
