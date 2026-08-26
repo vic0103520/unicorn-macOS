@@ -41,6 +41,14 @@ else:
     raise SystemExit(2)
 """)
         xcrun.chmod(0o755)
+        xcodebuild = directory / "xcodebuild"
+        xcodebuild.write_text("""#!/usr/bin/env python3
+import sys
+if '-quiet' not in sys.argv:
+    print('routine xcodebuild output')
+""")
+        xcodebuild.chmod(0o755)
+        self.xcodebuild = xcodebuild
         self.env = os.environ | {"PATH": f"{directory}:{os.environ['PATH']}"}
 
     def run_summary(self, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -82,7 +90,8 @@ else:
 
     def test_quiet_test_native_automatically_prints_summary(self) -> None:
         result = subprocess.run(
-            ["make", "--silent", "test-native", "XCODEBUILD=true", "TEST_ROOT=" + self.temp.name + "/results"],
+            ["make", "--silent", "test-native", "XCODEBUILD=" + str(self.xcodebuild),
+             "TEST_ROOT=" + self.temp.name + "/results"],
             cwd=ROOT,
             env=self.env,
             text=True,
@@ -90,7 +99,7 @@ else:
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("true clean test", result.stdout)
+        self.assertNotIn("routine xcodebuild output", result.stdout)
         self.assertIn("[PASS]", result.stdout)
         self.assertIn("first()", result.stdout)
         self.assertIn("Coverage:", result.stdout)
@@ -115,8 +124,8 @@ else:
 
     def test_quiet_test_automatically_prints_summary(self) -> None:
         result = subprocess.run(
-            ["make", "--silent", "test", "XCODEBUILD=true", "ARCHS=x86_64",
-             "APP_EXECUTABLE=/usr/bin/true", "NO_COLOR=1",
+            ["make", "--silent", "test", "XCODEBUILD=" + str(self.xcodebuild),
+             "ARCHS=x86_64", "APP_EXECUTABLE=/usr/bin/true", "NO_COLOR=1",
              "TEST_ROOT=" + self.temp.name + "/complete"],
             cwd=ROOT,
             env=self.env,
@@ -125,7 +134,7 @@ else:
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("true clean test", result.stdout)
+        self.assertNotIn("routine xcodebuild output", result.stdout)
         self.assertIn("[PASS] App build:", result.stdout)
         self.assertIn("[PASS] Tests:", result.stdout)
         self.assertIn("knownIssue()", result.stdout)
