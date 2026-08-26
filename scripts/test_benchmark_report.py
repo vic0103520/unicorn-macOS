@@ -148,6 +148,10 @@ if [ \"${FAIL_XCODEBUILD:-0}\" = 1 ]; then
     echo 'actionable benchmark failure' >&2
     exit 42
 fi
+if [ \"${FAIL_BENCHMARK_REPORT:-0}\" = 1 ] && [ \"${1:-}\" = -version ]; then
+    echo 'benchmark report context failure' >&2
+    exit 43
+fi
 while [ \"$#\" -gt 0 ]; do
     if [ \"$1\" = '-resultBundlePath' ]; then
         shift
@@ -285,6 +289,34 @@ fi
         self.assertTrue(xcode_summary.is_file())
         self.assertTrue(xcode_metrics.is_file())
         self.assertTrue(benchmark_summary.is_file())
+
+    def test_failed_standalone_summary_does_not_leave_stale_report(self) -> None:
+        root = Path(self.temporary_directory.name) / "failed-standalone"
+        result_bundle = root / "existing/Benchmark.xcresult"
+        result_bundle.mkdir(parents=True)
+        xcode_summary = root / "exports/xcode-summary.json"
+        xcode_metrics = root / "exports/xcode-metrics.json"
+        benchmark_summary = root / "reports/benchmark-summary.json"
+        benchmark_summary.parent.mkdir(parents=True)
+        benchmark_summary.write_text("stale report\n")
+
+        result = self.run_make(
+            "benchmark-summary",
+            environment_updates={"FAIL_BENCHMARK_REPORT": "1"},
+            make_variables=[
+                f"BENCHMARK_RESULT_BUNDLE={result_bundle}",
+                f"BENCHMARK_XCODE_SUMMARY={xcode_summary}",
+                f"BENCHMARK_XCODE_METRICS={xcode_metrics}",
+                f"BENCHMARK_SUMMARY={benchmark_summary}",
+            ],
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[FAIL] Benchmark report:", result.stdout)
+        self.assertTrue(xcode_summary.is_file())
+        self.assertTrue(xcode_metrics.is_file())
+        self.assertFalse(benchmark_summary.exists())
+        self.assertFalse(Path(f"{benchmark_summary}.tmp").exists())
 
     def test_benchmark_failure_replays_actionable_build_output(self) -> None:
         result = self.run_make("benchmark-native", fail=True)

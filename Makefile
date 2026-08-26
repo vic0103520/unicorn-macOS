@@ -256,12 +256,16 @@ benchmark-summary:
 		$(call BENCHMARK_FAILURE,Benchmark summary export: xcresult=$(BENCHMARK_RESULT_BUNDLE) exit=$$status); \
 		exit "$$status"; \
 	fi
-	@if python3 scripts/benchmark_report.py \
+	@report_tmp="$(BENCHMARK_SUMMARY).tmp"; \
+	trap 'rm -f "$$report_tmp"' EXIT; \
+	rm -f "$$report_tmp" "$(BENCHMARK_SUMMARY)"; \
+	if python3 scripts/benchmark_report.py \
 		--keymap unicorn/keymap.json \
 		--test-summary "$(BENCHMARK_XCODE_SUMMARY)" \
 		--metrics "$(BENCHMARK_XCODE_METRICS)" \
-		--output "$(BENCHMARK_SUMMARY)" \
-		--artifact-path "$(BENCHMARK_ROOT)"; then \
+		--output "$$report_tmp" \
+		--artifact-path "$(BENCHMARK_ROOT)" && \
+		mv "$$report_tmp" "$(BENCHMARK_SUMMARY)"; then \
 		:; \
 	else \
 		status=$$?; \
