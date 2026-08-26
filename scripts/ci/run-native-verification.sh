@@ -18,7 +18,7 @@ case "$mode" in
   coverage)
     # The coverage target also cross-compiles the app. Xcode's automatic build-product
     # registration is contained by ephemeral runner teardown; CI never installs or activates it.
-    make coverage VERBOSE=1 NO_COLOR=1 \
+    make --silent coverage \
       2>&1 | tee build/Diagnostics/native-tests-and-coverage.log
     xcrun xccov view --report --only-targets \
       build/Test/Results/UnicornCoreTests.xcresult \
@@ -28,26 +28,22 @@ case "$mode" in
     root="$PWD/build/Sanitizers/AddressUndefined"
     rm -rf "$root"
     mkdir -p "$root"
-    make test-native \
+    make --silent test-native \
       XCODEBUILD='xcodebuild -enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES' \
       TEST_ROOT="$root" \
       TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult" \
       NATIVE_ARCH="$(uname -m)" \
-      VERBOSE=1 \
-      NO_COLOR=1 \
       2>&1 | tee build/Diagnostics/address-undefined-sanitizers.log
     ;;
   thread)
     root="$PWD/build/Sanitizers/Thread"
     rm -rf "$root"
     mkdir -p "$root"
-    make test-native \
+    make --silent test-native \
       XCODEBUILD='xcodebuild -enableThreadSanitizer YES' \
       TEST_ROOT="$root" \
       TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult" \
       NATIVE_ARCH="$(uname -m)" \
-      VERBOSE=1 \
-      NO_COLOR=1 \
       2>&1 | tee build/Diagnostics/thread-sanitizer.log
     ;;
   *)

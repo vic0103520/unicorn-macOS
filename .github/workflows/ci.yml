@@ -57,7 +57,7 @@ jobs:
         "$install_dir/swiftlint" version
 
     - name: Run lint
-      run: make lint
+      run: make --silent lint
 
   native-tests-and-coverage:
     name: Native tests and coverage
@@ -166,13 +166,11 @@ jobs:
         root="$PWD/build/CIRelease"
         rm -rf "$root"
         mkdir -p "$root" build/Diagnostics
-        make build-universal \
+        make --silent build-universal \
           CONFIG=Release \
           ARCHS='arm64 x86_64' \
           SYMROOT="$root/Products" \
           OBJROOT="$root/Intermediates" \
-          VERBOSE=1 \
-          NO_COLOR=1 \
           2>&1 | tee build/Diagnostics/release-cross-architecture.log
 
     - name: Verify Release bundle without installing it

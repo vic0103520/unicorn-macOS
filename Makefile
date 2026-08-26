@@ -39,7 +39,7 @@ INSTALL_DIR ?= $(HOME)/Library/Input Methods
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test test-native test-summary coverage coverage-report lint format
+.PHONY: test test-native _test-native test-summary coverage coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -138,15 +138,30 @@ install: build
 clean:
 	rm -rf "$(BUILD_DIR)"
 
-test: test-native
-	+@$(MAKE) --no-print-directory build-universal \
-		CONFIG=Debug \
-		ARCHS="$(ARCHS)" \
-		SYMROOT="$(TEST_APP_SYMROOT)" \
-		OBJROOT="$(TEST_APP_OBJROOT)"
+test:
+	+@test_status=0; build_status=0; summary_status=0; \
+	$(MAKE) --no-print-directory _test-native || test_status=$$?; \
+	if [ "$$test_status" -eq 0 ]; then \
+		$(MAKE) --no-print-directory build-universal \
+			CONFIG=Debug \
+			ARCHS="$(ARCHS)" \
+			SYMROOT="$(TEST_APP_SYMROOT)" \
+			OBJROOT="$(TEST_APP_OBJROOT)" || build_status=$$?; \
+	fi; \
+	$(MAKE) --no-print-directory test-summary || summary_status=$$?; \
+	[ "$$test_status" -eq 0 ] || exit "$$test_status"; \
+	[ "$$build_status" -eq 0 ] || exit "$$build_status"; \
+	exit "$$summary_status"
 
 test-native:
-	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
+	+@test_status=0; summary_status=0; \
+	$(MAKE) --no-print-directory _test-native || test_status=$$?; \
+	$(MAKE) --no-print-directory test-summary || summary_status=$$?; \
+	[ "$$test_status" -eq 0 ] || exit "$$test_status"; \
+	exit "$$summary_status"
+
+_test-native:
+	@printf 'Testing UnicornCore: arch=%s configuration=Debug\n' "$(NATIVE_ARCH)"
 	@rm -rf "$(TEST_ROOT)"
 	@if $(XCODEBUILD_COMMAND) clean test $(XCODE_PROJECT_ARGS) \
 		-configuration Debug \
@@ -163,28 +178,11 @@ test-native:
 		printf '%b%s\n' "$(FAIL_LABEL)" " Native tests: arch=$(NATIVE_ARCH) exit=$$status"; \
 		exit "$$status"; \
 	fi
-	+@$(MAKE) --no-print-directory test-summary
 
 test-summary:
-	@summary_file="$$(mktemp)" || { printf '%b%s\n' "$(FAIL_LABEL)" " Test summary: unable to create temporary file"; exit 1; }; \
-	trap 'rm -f "$$summary_file"' EXIT; \
-	if xcrun xcresulttool get test-results summary --path "$(TEST_RESULT_BUNDLE)" > "$$summary_file" && \
-		result="$$(/usr/bin/plutil -extract result raw -o - "$$summary_file")" && \
-		passed="$$(/usr/bin/plutil -extract passedTests raw -o - "$$summary_file")" && \
-		failed="$$(/usr/bin/plutil -extract failedTests raw -o - "$$summary_file")" && \
-		skipped="$$(/usr/bin/plutil -extract skippedTests raw -o - "$$summary_file")"; then \
-		if [ "$$result" = "Passed" ] && [ "$$failed" -eq 0 ]; then \
-			printf '%b%s\n' "$(PASS_LABEL)" " Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
-		else \
-			printf '%b%s\n' "$(FAIL_LABEL)" " Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
-			exit 1; \
-		fi; \
-	else \
-		status=$$?; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " Test summary: xcresult=$(TEST_RESULT_BUNDLE) exit=$$status"; \
-		exit "$$status"; \
-	fi
-	@printf '%b%s\n' "$(RESULT_LABEL)" " xcresult: path=$(TEST_RESULT_BUNDLE)"
+	@scripts/ci/summarize-tests.py "$(TEST_RESULT_BUNDLE)" \
+		--configuration Debug \
+		$(if $(filter 1,$(NO_COLOR)),--no-color,)
 
 coverage: test
 	+@$(MAKE) --no-print-directory coverage-report
