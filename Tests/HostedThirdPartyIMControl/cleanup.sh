@@ -118,6 +118,82 @@ result["terminatedOnlyExactTrackedProcess"] = (
 output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
 PY
 
+python3 - "$STATE" "$EVIDENCE/official-installer-cleanup.json" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import subprocess
+import sys
+state_path = pathlib.Path(sys.argv[1])
+output = pathlib.Path(sys.argv[2])
+try:
+    state = json.loads(state_path.read_text())
+except (OSError, json.JSONDecodeError):
+    state = {}
+system_app = pathlib.Path("/Library/Input Methods/Squirrel.app")
+tracked = next(
+    (item for item in state.get("trackedPaths", []) if item.get("path") == str(system_app)),
+    None,
+)
+receipt = state.get("installerReceipt") or {}
+value = {
+    "timestamp": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+    "systemAppTracked": tracked is not None,
+    "systemAppExistedBefore": tracked.get("existedBefore") if tracked else None,
+    "receiptExistedBefore": receipt.get("existedBefore"),
+    "systemAppRemovalAttempted": False,
+    "receiptForgetAttempted": False,
+}
+if tracked and not tracked.get("existedBefore") and system_app.exists():
+    value["systemAppRemovalAttempted"] = True
+    completed = subprocess.run(
+        ["sudo", "-n", "rm", "-rf", "--", str(system_app)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    value["systemAppRemoval"] = {
+        "command": ["sudo", "-n", "rm", "-rf", "--", str(system_app)],
+        "exitCode": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
+if receipt.get("existedBefore") is False:
+    info = subprocess.run(
+        ["pkgutil", "--pkg-info", "im.rime.inputmethod.Squirrel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if info.returncode == 0:
+        value["receiptForgetAttempted"] = True
+        completed = subprocess.run(
+            ["sudo", "-n", "pkgutil", "--forget", "im.rime.inputmethod.Squirrel"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        value["receiptForget"] = {
+            "command": ["sudo", "-n", "pkgutil", "--forget", "im.rime.inputmethod.Squirrel"],
+            "exitCode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        }
+value["systemAppExistsAfter"] = system_app.exists()
+receipt_after = subprocess.run(
+    ["pkgutil", "--pkg-info", "im.rime.inputmethod.Squirrel"],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+value["receiptExistsAfter"] = receipt_after.returncode == 0
+value["success"] = (
+    (not tracked or tracked.get("existedBefore") or not value["systemAppExistsAfter"])
+    and (receipt.get("existedBefore") is not False or not value["receiptExistsAfter"])
+)
+output.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+PY
+
 python3 - "$STATE" "$FILE_RESULT" <<'PY'
 import datetime as dt
 import json
@@ -138,6 +214,7 @@ allowed = {
     home / "Library" / "Preferences" / "im.rime.inputmethod.Squirrel.plist",
     home / "Library" / "Caches" / "im.rime.inputmethod.Squirrel",
     home / "Library" / "Application Support" / "Squirrel",
+    pathlib.Path("/Library/Input Methods/Squirrel.app"),
 }
 results = []
 for item in state.get("trackedPaths", []):
@@ -184,7 +261,7 @@ if [[ -x "$HELPER" ]]; then
         >"$EVIDENCE/input-sources-after-cleanup-command.log" 2>&1 || true
 fi
 
-python3 - "$SOURCE_RESULT" "$FILE_RESULT" "$PROCESS_RESULT" "$RESULT" "$source_status" <<'PY'
+python3 - "$SOURCE_RESULT" "$FILE_RESULT" "$PROCESS_RESULT" "$EVIDENCE/official-installer-cleanup.json" "$RESULT" "$source_status" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -200,15 +277,17 @@ def load(path):
 source = load(sys.argv[1])
 files = load(sys.argv[2])
 exact_process = load(sys.argv[3])
+installer = load(sys.argv[4])
 process = subprocess.run(
     ["pgrep", "-x", "Squirrel"], capture_output=True, text=True, check=False
 )
 process_absent = process.returncode == 1
 success = (
-    int(sys.argv[5]) == 0
+    int(sys.argv[6]) == 0
     and bool(source.get("success"))
     and bool(files.get("success"))
     and bool(exact_process.get("terminatedOnlyExactTrackedProcess"))
+    and bool(installer.get("success"))
     and process_absent
 )
 value = {
@@ -217,11 +296,12 @@ value = {
     "restoredOriginalSourceAndDisabledThirdPartySources": source,
     "removedTemporaryThirdPartyState": files,
     "exactDirectLaunchProcessCleanup": exact_process,
+    "officialInstallerCleanup": installer,
     "squirrelProcessAbsent": process_absent,
     "pgrepExitCode": process.returncode,
     "pgrepStdout": process.stdout,
 }
-path = pathlib.Path(sys.argv[4])
+path = pathlib.Path(sys.argv[5])
 path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 raise SystemExit(0 if success else 5)
 PY

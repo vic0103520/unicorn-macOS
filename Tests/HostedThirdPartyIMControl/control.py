@@ -50,6 +50,7 @@ AUTOMATIC_LAUNCH_DEADLINE_SECONDS = 15
 DIRECT_EXPERIMENT = "third-party-squirrel-control"
 AUTOMATIC_BASELINE_EXPERIMENT = "squirrel-automatic-baseline"
 AUTOMATIC_LS_REFRESH_EXPERIMENT = "squirrel-automatic-ls-refresh"
+OFFICIAL_INSTALLER_EXPERIMENT = "squirrel-official-installer"
 
 
 def load_json(path: pathlib.Path, default: Any = None) -> Any:
@@ -87,6 +88,13 @@ def initialize(
             "selectionStarted": False,
             "dvorakInitiallyEnabled": False,
             "directLaunch": None,
+            "installerReceipt": {
+                "identifier": "im.rime.inputmethod.Squirrel",
+                "existedBefore": shared.run_command(
+                    ["pkgutil", "--pkg-info", "im.rime.inputmethod.Squirrel"]
+                ).get("exitCode")
+                == 0,
+            },
             "trackedPaths": [
                 {"path": str(path), "existedBefore": path.exists()}
                 for path in tracked_paths
@@ -113,7 +121,11 @@ def initialize(
                     else (
                         "narrow LaunchServices registration and bounded cache convergence"
                         if experiment == AUTOMATIC_LS_REFRESH_EXPERIMENT
-                        else "fresh-runner extracted-app automatic activation baseline"
+                        else (
+                            "pinned official signed and notarized installer topology"
+                            if experiment == OFFICIAL_INSTALLER_EXPERIMENT
+                            else "fresh-runner extracted-app automatic activation baseline"
+                        )
                     )
                 ),
                 "thirdPartyProductCount": 1,
@@ -122,7 +134,8 @@ def initialize(
                 "passFailUsesOCRPixelsOrCoordinates": False,
                 "productBehaviorChanged": False,
                 "privatePreferenceOrAuthorizationDatabaseEdited": False,
-                "packageInstallerOrPostinstallExecuted": False,
+                "packageInstallerOrPostinstallExecuted": experiment
+                == "squirrel-official-installer",
                 "systemInputMethodsDirectoryUsed": False,
                 "securityWeakened": False,
             },
@@ -165,7 +178,11 @@ def initialize(
                     "transition": (
                         "Apply narrow exact-app LaunchServices registration and an eight-second same-session convergence wait before automatic activation."
                         if experiment == AUTOMATIC_LS_REFRESH_EXPERIMENT
-                        else "Reproduce automatic activation from a fresh runner with the verified extracted app in the conventional per-user Input Methods location and no direct execution."
+                        else (
+                            "Execute the pinned official signed and notarized installer on a fresh disposable runner, retain its side effects, then use the same exact approval, selection, client, and composition proof."
+                            if experiment == OFFICIAL_INSTALLER_EXPERIMENT
+                            else "Reproduce automatic activation from a fresh runner with the verified extracted app in the conventional per-user Input Methods location and no direct execution."
+                        )
                     ),
                     "whySmallest": "The app, provenance, location, data, approval, source, client, and physical events match the proven control; only the named arm condition changes.",
                     "causalClaimLimit": "Success proves the changed treatment sufficient relative to the fresh baseline; failure reports only the earliest observed boundary.",
@@ -1415,6 +1432,7 @@ def run_automatic_control(
     if experiment not in {
         AUTOMATIC_BASELINE_EXPERIMENT,
         AUTOMATIC_LS_REFRESH_EXPERIMENT,
+        OFFICIAL_INSTALLER_EXPERIMENT,
     }:
         raise ValueError(f"unsupported automatic experiment: {experiment}")
     report: dict[str, Any] = {
@@ -1515,8 +1533,17 @@ def run_automatic_control(
             )
         else:
             report["launchServicesTreatment"] = {
-                "performed": False,
-                "changedCondition": "none: exact extracted-app automatic-launch baseline",
+                "performed": experiment == OFFICIAL_INSTALLER_EXPERIMENT,
+                "changedCondition": (
+                    "official signed and notarized installer topology and package side effects"
+                    if experiment == OFFICIAL_INSTALLER_EXPERIMENT
+                    else "none: exact extracted-app automatic-launch baseline"
+                ),
+                "installerSideEffectsEvidence": (
+                    "official-installer-side-effects.json"
+                    if experiment == OFFICIAL_INSTALLER_EXPERIMENT
+                    else None
+                ),
             }
         preselection = process_snapshot()
         if preselection.get("processCount") != 0:
@@ -2100,6 +2127,7 @@ def final_diagnosis(
     if report.get("experiment") in {
         AUTOMATIC_BASELINE_EXPERIMENT,
         AUTOMATIC_LS_REFRESH_EXPERIMENT,
+        OFFICIAL_INSTALLER_EXPERIMENT,
     }:
         return automatic_final_diagnosis(summary, report)
     direct = report.get("directLaunch", {})

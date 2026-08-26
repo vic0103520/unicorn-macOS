@@ -9,16 +9,20 @@ HELPER="$BIN/ThirdPartySourceHelper"
 CLIENT_APP="$BUILD_ROOT/HostedThirdPartyControlClient.app"
 PACKAGE="$BUILD_ROOT/Squirrel-1.1.2.pkg"
 EXPANDED="$BUILD_ROOT/expanded"
-INSTALLED_APP="$HOME/Library/Input Methods/Squirrel.app"
+EXPERIMENT="${SQUIRREL_EXPERIMENT:-third-party-squirrel-control}"
+case "$EXPERIMENT" in
+    third-party-squirrel-control|squirrel-automatic-baseline|squirrel-automatic-ls-refresh|squirrel-official-installer) ;;
+    *) printf 'Unsupported SQUIRREL_EXPERIMENT: %s\n' "$EXPERIMENT" >&2; exit 64 ;;
+esac
+if [[ "$EXPERIMENT" == "squirrel-official-installer" ]]; then
+    INSTALLED_APP="/Library/Input Methods/Squirrel.app"
+else
+    INSTALLED_APP="$HOME/Library/Input Methods/Squirrel.app"
+fi
 SQUIRREL="$INSTALLED_APP/Contents/MacOS/Squirrel"
 ASSET_URL="https://github.com/rime/squirrel/releases/download/1.1.2/Squirrel-1.1.2.pkg"
 ASSET_SHA256="614746013212937623d5bbab9901e9c43d1ec937aa32307d6b6092a05e308287"
 PRODUCER_EXIT="$EVIDENCE/producer-exit-code.txt"
-EXPERIMENT="${SQUIRREL_EXPERIMENT:-third-party-squirrel-control}"
-case "$EXPERIMENT" in
-    third-party-squirrel-control|squirrel-automatic-baseline|squirrel-automatic-ls-refresh) ;;
-    *) printf 'Unsupported SQUIRREL_EXPERIMENT: %s\n' "$EXPERIMENT" >&2; exit 64 ;;
-esac
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$EVIDENCE" "$BIN" "$CLIENT_APP/Contents/MacOS"
@@ -239,12 +243,91 @@ xcrun stapler validate "$PACKAGE" \
     >"$EVIDENCE/package-stapler.log" 2>&1
 pkgutil --expand-full "$PACKAGE" "$EXPANDED"
 test -d "$EXPANDED/Payload/Squirrel.app"
-cp "$EXPANDED/Scripts/postinstall" "$EVIDENCE/package-postinstall-not-executed.txt"
-mkdir -p "$(dirname "$INSTALLED_APP")"
-ditto "$EXPANDED/Payload/Squirrel.app" "$INSTALLED_APP"
+if [[ "$EXPERIMENT" == "squirrel-official-installer" ]]; then
+    cp "$EXPANDED/Scripts/postinstall" "$EVIDENCE/package-postinstall-executed-by-installer.txt"
+    PROVENANCE_APP="$EXPANDED/Payload/Squirrel.app"
+else
+    cp "$EXPANDED/Scripts/postinstall" "$EVIDENCE/package-postinstall-not-executed.txt"
+    mkdir -p "$(dirname "$INSTALLED_APP")"
+    ditto "$EXPANDED/Payload/Squirrel.app" "$INSTALLED_APP"
+    PROVENANCE_APP="$INSTALLED_APP"
+fi
 python3 "$ROOT/Tests/HostedThirdPartyIMControl/control.py" \
-    provenance "$EVIDENCE" "$PACKAGE" "$INSTALLED_APP"
+    provenance "$EVIDENCE" "$PACKAGE" "$PROVENANCE_APP"
 record_phase "download-and-verify-official-release" "completed"
+
+if [[ "$EXPERIMENT" == "squirrel-official-installer" ]]; then
+    record_phase "execute-pinned-official-installer" "started"
+    python3 - "$EVIDENCE/official-installer-side-effects-before.json" "$HELPER" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import subprocess
+import sys
+helper = sys.argv[2]
+def run(command):
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    return {"command": command, "exitCode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr}
+value = {
+    "timestamp": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+    "systemAppExists": pathlib.Path("/Library/Input Methods/Squirrel.app").exists(),
+    "receipt": run(["pkgutil", "--pkg-info", "im.rime.inputmethod.Squirrel"]),
+    "process": run(["pgrep", "-x", "Squirrel"]),
+}
+pathlib.Path(sys.argv[1]).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+PY
+    sudo -n installer -verboseR -pkg "$PACKAGE" -target / \
+        >"$EVIDENCE/official-installer.stdout.log" \
+        2>"$EVIDENCE/official-installer.stderr.log"
+    test -d "$INSTALLED_APP"
+    python3 - "$EVIDENCE/official-installer-side-effects.json" "$EVIDENCE/official-installer-side-effects-before.json" "$HELPER" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import subprocess
+import sys
+output = pathlib.Path(sys.argv[1])
+before = json.loads(pathlib.Path(sys.argv[2]).read_text())
+helper = sys.argv[3]
+def run(command):
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    return {"command": command, "exitCode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr}
+source_path = output.with_name("input-sources-after-official-installer.json")
+source = run([helper, "sources", "after-official-installer-before-exact-sequence", str(source_path)])
+value = {
+    "timestamp": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+    "before": before,
+    "systemAppExists": pathlib.Path("/Library/Input Methods/Squirrel.app").exists(),
+    "receipt": run(["pkgutil", "--pkg-info", "im.rime.inputmethod.Squirrel"]),
+    "process": run(["pgrep", "-x", "Squirrel"]),
+    "filesystem": run(["stat", "-f", "%N|%Su|%Sg|%Sp", "/Library/Input Methods/Squirrel.app", "/Library/Input Methods/Squirrel.app/Contents/MacOS/Squirrel"]),
+    "sourceSnapshotCommand": source,
+    "sourceSnapshotPath": source_path.name,
+    "packageInstallerExecuted": True,
+    "packagePostinstallExecuted": True,
+}
+output.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+PY
+    python3 - "$EVIDENCE/provenance.json" "$EVIDENCE/summary.json" <<'PY'
+import json
+import pathlib
+import sys
+provenance_path = pathlib.Path(sys.argv[1])
+summary_path = pathlib.Path(sys.argv[2])
+provenance = json.loads(provenance_path.read_text())
+provenance["installationMethod"].update({
+    "method": "pinned official signed and notarized Installer package executed with root authorization on a fresh disposable runner",
+    "packageInstallerExecuted": True,
+    "packagePostinstallExecuted": True,
+})
+provenance_path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n")
+summary = json.loads(summary_path.read_text())
+summary["provenance"]["packageInstallerExecuted"] = True
+summary["provenance"]["packagePostinstallExecuted"] = True
+summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+PY
+    record_phase "execute-pinned-official-installer" "completed"
+fi
 
 record_phase "prepare-official-input-method-data" "started"
 python3 - "$SQUIRREL" "$INSTALLED_APP/Contents/SharedSupport" "$EVIDENCE/squirrel-build.log" <<'PY'
