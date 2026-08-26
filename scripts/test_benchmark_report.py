@@ -49,6 +49,8 @@ class BenchmarkReportTests(unittest.TestCase):
             "xcodeTestSummary": {
                 "result": "Passed",
                 "passedTests": 2,
+                "failedTests": 0,
+                "skippedTests": 0,
                 "totalTestCount": 2,
             },
             "performanceTests": [
@@ -80,7 +82,9 @@ class BenchmarkReportTests(unittest.TestCase):
 
         self.assertEqual(ANSI_PATTERN.sub("", colored), plain)
         self.assertIn("\033[36mUNICORN BENCHMARKS\033[0m", colored)
-        self.assertIn("\033[32mPASS  2/2\033[0m", colored)
+        self.assertIn(
+            "\033[32mPASS  passed=2 failed=0 skipped=0 total=2\033[0m", colored
+        )
         self.assertIn("\033[36mRelease · arm64 · 5 iterations\033[0m", colored)
         self.assertIn("\033[1mIn-memory initialization\033[0m", colored)
         self.assertIn("Results: \033[36mbuild/Benchmark\033[0m", colored)
@@ -113,12 +117,22 @@ class BenchmarkReportTests(unittest.TestCase):
             benchmark_report.color_enabled(FakeStream(True), {"NO_COLOR": "0"})
         )
 
-    def test_failure_result_is_red(self) -> None:
-        self.report["xcodeTestSummary"]["result"] = "Failed"
+    def test_failure_result_is_red_with_explicit_counts(self) -> None:
+        self.report["xcodeTestSummary"].update(
+            {
+                "result": "Failed",
+                "passedTests": 1,
+                "failedTests": 1,
+                "skippedTests": 1,
+                "totalTestCount": 3,
+            }
+        )
         colored = benchmark_report.render_human_summary(
             self.report, "build/Benchmark", use_color=True
         )
-        self.assertIn("\033[31mFAIL  2/2\033[0m", colored)
+        self.assertIn(
+            "\033[31mFAIL  passed=1 failed=1 skipped=1 total=3\033[0m", colored
+        )
 
 
 class BenchmarkMakeTests(unittest.TestCase):
@@ -150,7 +164,7 @@ echo 'routine xcodebuild diagnostic' >&2
 if [ \"$1\" = swift ]; then
     echo 'Swift version test'
 elif [ \"$4\" = summary ]; then
-    printf '%s\\n' '{"result":"Passed","passedTests":7,"totalTestCount":7}'
+    printf '%s\\n' '{"result":"Passed","passedTests":7,"failedTests":0,"skippedTests":0,"totalTestCount":7}'
 elif [ \"$4\" = metrics ]; then
     printf '%s\\n' '[]'
 else
@@ -231,7 +245,13 @@ fi
                 result = self.run_make(target)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 self.assertNotIn("routine xcodebuild", result.stdout)
-                self.assertEqual(result.stdout.count("UNICORN BENCHMARKS  PASS  7/7"), 1)
+                self.assertEqual(
+                    result.stdout.count(
+                        "UNICORN BENCHMARKS  PASS  "
+                        "passed=7 failed=0 skipped=0 total=7"
+                    ),
+                    1,
+                )
                 self.assertIn("Release · arm64 · 5 iterations", result.stdout)
                 self.assertNotIn("\033[", result.stdout)
                 summary = (

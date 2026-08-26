@@ -49,7 +49,7 @@ All generated files stay under the ignored `build/Benchmark/` directory:
 The context records production keymap byte count and SHA-256, native architecture, macOS product and build versions, Xcode version and build, Swift version, Release configuration, measurement iterations, and synthetic-fixture dimensions. The concise terminal report shows batch-average wall-clock and CPU time, peak memory for selected workloads, and wall-clock relative standard deviation as variation:
 
 ```text
-UNICORN BENCHMARKS  PASS  7/7
+UNICORN BENCHMARKS  PASS  passed=7 failed=0 skipped=0 total=7
 Release · arm64 · 5 iterations
 
 WORKLOAD                                      WALL        CPU   PEAK MEMORY   VARIATION

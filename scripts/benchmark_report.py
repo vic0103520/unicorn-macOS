@@ -119,12 +119,15 @@ def render_human_summary(
     test_summary = report["xcodeTestSummary"]
     context = report["context"]
     passed = test_summary["passedTests"]
+    failed = test_summary["failedTests"]
+    skipped = test_summary["skippedTests"]
     total = test_summary["totalTestCount"]
     status = "PASS" if test_summary["result"] == "Passed" and passed == total else "FAIL"
 
     title = styled("UNICORN BENCHMARKS", ANSI_CYAN, use_color)
     status_color = ANSI_GREEN if status == "PASS" else ANSI_RED
-    result = styled(f"{status}  {passed}/{total}", status_color, use_color)
+    counts = f"passed={passed} failed={failed} skipped={skipped} total={total}"
+    result = styled(f"{status}  {counts}", status_color, use_color)
     configuration = (
         f"{context['configuration']} · {context['hostArchitecture']} · "
         f"{context['measurementIterations']} iterations"
