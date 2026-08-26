@@ -62,13 +62,17 @@ def main() -> int:
             "xcrun", "xcresulttool", "get", "test-results", "tests",
             "--path", args.result_bundle,
         ])
-        coverage = subprocess.check_output([
-            "xcrun", "xccov", "view", "--report", "--only-targets",
-            args.result_bundle,
-        ], text=True).strip()
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         print(f"{styled('[FAIL]', 'red', color)} Test summary: {error}", file=sys.stderr)
         return 1
+
+    try:
+        coverage = subprocess.check_output([
+            "xcrun", "xccov", "view", "--report", "--only-targets",
+            args.result_bundle,
+        ], text=True, stderr=subprocess.PIPE).strip()
+    except (OSError, subprocess.CalledProcessError):
+        coverage = "unavailable"
 
     result = summary.get("result", "unknown")
     passed = summary.get("passedTests", 0)

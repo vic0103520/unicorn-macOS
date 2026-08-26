@@ -36,6 +36,8 @@ elif 'tests' in sys.argv:
         {'nodeType': 'Test Case', 'name': 'third()', 'result': 'Skipped'},
         {'nodeType': 'Test Case', 'name': 'knownIssue()', 'result': 'Expected Failure'}]}]}))
 elif 'xccov' in sys.argv:
+    if os.environ.get('SUMMARY_COVERAGE_UNAVAILABLE'):
+        raise SystemExit(1)
     print('UnicornCore.framework 87.50% (14/16)')
 else:
     raise SystemExit(2)
@@ -121,6 +123,25 @@ if '-quiet' not in sys.argv:
             "Result: Failed | total=4 passed=1 failed=1 skipped=1 expected-failures=1",
             result.stdout,
         )
+
+    def test_failed_run_without_coverage_still_lists_the_failure(self) -> None:
+        env = self.env | {
+            "SUMMARY_RESULT": "Failed",
+            "SUMMARY_COVERAGE_UNAVAILABLE": "1",
+        }
+        result = subprocess.run(
+            [str(SUMMARY), "failed.xcresult", "--no-color"],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Failed             first()", result.stdout)
+        self.assertIn("Result: Failed", result.stdout)
+        self.assertIn("Coverage: unavailable", result.stdout)
+        self.assertIn("xcresult: failed.xcresult", result.stdout)
 
     def test_quiet_test_automatically_prints_summary(self) -> None:
         result = subprocess.run(
