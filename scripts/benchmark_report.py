@@ -20,15 +20,38 @@ ANSI_RED = "\033[31m"
 ANSI_YELLOW = "\033[33m"
 ANSI_RESET = "\033[0m"
 
-WORKLOAD_NAMES = {
-    "testInMemoryInitializationFromProductionKeymap": "In-memory initialization",
-    "testTraversalOfEveryCandidateBearingProductionPath": "Candidate-bearing path traversal",
-    "testCommonProductionComposition": "Common production composition",
-    "testDeterministicMixedComposition": "Deterministic mixed composition",
-    "testAccumulatingSoftCommitAndHistory": "Accumulating soft commit and history",
-    "testUndoAndHistoryPressureAtCap": "Undo and history pressure",
+WALL_METRIC = "com.apple.dt.XCTMetric_Clock.time.monotonic"
+CPU_METRIC = "com.apple.dt.XCTMetric_CPU.time"
+MEMORY_METRIC = "com.apple.dt.XCTMetric_Memory.physical_peak"
+
+WORKLOADS = {
+    "testInMemoryInitializationFromProductionKeymap": (
+        "In-memory initialization",
+        {WALL_METRIC, CPU_METRIC, MEMORY_METRIC},
+    ),
+    "testTraversalOfEveryCandidateBearingProductionPath": (
+        "Candidate-bearing path traversal",
+        {WALL_METRIC, CPU_METRIC},
+    ),
+    "testCommonProductionComposition": (
+        "Common production composition",
+        {WALL_METRIC, CPU_METRIC},
+    ),
+    "testDeterministicMixedComposition": (
+        "Deterministic mixed composition",
+        {WALL_METRIC, CPU_METRIC},
+    ),
+    "testAccumulatingSoftCommitAndHistory": (
+        "Accumulating soft commit and history",
+        {WALL_METRIC, CPU_METRIC, MEMORY_METRIC},
+    ),
+    "testUndoAndHistoryPressureAtCap": (
+        "Undo and history pressure",
+        {WALL_METRIC, CPU_METRIC, MEMORY_METRIC},
+    ),
     "testProductionCandidateNavigationAndSelection": (
-        "Production candidate navigation and selection"
+        "Production candidate navigation and selection",
+        {WALL_METRIC, CPU_METRIC},
     ),
 }
 
@@ -111,6 +134,39 @@ def terminal_artifact_path(artifact_path: str) -> str:
         return artifact_path
 
 
+def has_complete_measurements(report: dict) -> bool:
+    tests = report["performanceTests"]
+    names = [test["name"] for test in tests]
+    if len(names) != len(WORKLOADS) or set(names) != set(WORKLOADS):
+        return False
+
+    for test in tests:
+        required_metrics = WORKLOADS[test["name"]][1]
+        metrics = test["metrics"]
+        identifiers = [metric["identifier"] for metric in metrics]
+        if any(identifiers.count(identifier) != 1 for identifier in required_metrics):
+            return False
+        by_identifier = {metric["identifier"]: metric for metric in metrics}
+        if any(
+            len(by_identifier[identifier]["measurements"]) != 5
+            for identifier in required_metrics
+        ):
+            return False
+    return True
+
+
+def benchmark_passed(report: dict) -> bool:
+    summary = report["xcodeTestSummary"]
+    return (
+        summary["result"] == "Passed"
+        and summary["passedTests"] == len(WORKLOADS)
+        and summary["failedTests"] == 0
+        and summary["skippedTests"] == 0
+        and summary["totalTestCount"] == len(WORKLOADS)
+        and has_complete_measurements(report)
+    )
+
+
 def render_human_summary(
     report: dict,
     artifact_path: str,
@@ -122,7 +178,7 @@ def render_human_summary(
     failed = test_summary["failedTests"]
     skipped = test_summary["skippedTests"]
     total = test_summary["totalTestCount"]
-    status = "PASS" if test_summary["result"] == "Passed" and passed == total else "FAIL"
+    status = "PASS" if benchmark_passed(report) else "FAIL"
 
     title = styled("UNICORN BENCHMARKS", ANSI_CYAN, use_color)
     status_color = ANSI_GREEN if status == "PASS" else ANSI_RED
@@ -138,25 +194,20 @@ def render_human_summary(
         "",
     ]
 
-    metric_identifiers = {
-        "wall": "com.apple.dt.XCTMetric_Clock.time.monotonic",
-        "cpu": "com.apple.dt.XCTMetric_CPU.time",
-        "memory": "com.apple.dt.XCTMetric_Memory.physical_peak",
-    }
     rows = []
-    workload_order = {name: index for index, name in enumerate(WORKLOAD_NAMES)}
+    workload_order = {name: index for index, name in enumerate(WORKLOADS)}
     tests = sorted(
         report["performanceTests"],
         key=lambda test: workload_order.get(test["name"], len(workload_order)),
     )
     for test in tests:
         metrics = {metric["identifier"]: metric for metric in test["metrics"]}
-        wall = metrics.get(metric_identifiers["wall"])
-        cpu = metrics.get(metric_identifiers["cpu"])
-        memory = metrics.get(metric_identifiers["memory"])
+        wall = metrics.get(WALL_METRIC)
+        cpu = metrics.get(CPU_METRIC)
+        memory = metrics.get(MEMORY_METRIC)
         rows.append(
             (
-                WORKLOAD_NAMES.get(test["name"], test["name"]),
+                WORKLOADS.get(test["name"], (test["name"], set()))[0],
                 display_value(wall) if wall else "-",
                 display_value(cpu) if cpu else "-",
                 display_value(memory) if memory else "-",
@@ -279,6 +330,9 @@ def main() -> None:
     output_path = Path(arguments.output)
     output_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print_human_summary(report, arguments.artifact_path)
+    if test_summary["result"] == "Passed" and not benchmark_passed(report):
+        print("Benchmark measurements are incomplete.", file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 """Focused tests for benchmark terminal report rendering."""
 
 import errno
+import json
 import os
 import pty
 import re
@@ -35,6 +36,15 @@ def metric(identifier: str, value: float, unit: str, variation: float) -> dict:
 WALL = "com.apple.dt.XCTMetric_Clock.time.monotonic"
 CPU = "com.apple.dt.XCTMetric_CPU.time"
 MEMORY = "com.apple.dt.XCTMetric_Memory.physical_peak"
+EXPECTED_WORKLOAD_METRICS = {
+    "testInMemoryInitializationFromProductionKeymap": {WALL, CPU, MEMORY},
+    "testTraversalOfEveryCandidateBearingProductionPath": {WALL, CPU},
+    "testCommonProductionComposition": {WALL, CPU},
+    "testDeterministicMixedComposition": {WALL, CPU},
+    "testAccumulatingSoftCommitAndHistory": {WALL, CPU, MEMORY},
+    "testUndoAndHistoryPressureAtCap": {WALL, CPU, MEMORY},
+    "testProductionCandidateNavigationAndSelection": {WALL, CPU},
+}
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -83,7 +93,7 @@ class BenchmarkReportTests(unittest.TestCase):
         self.assertEqual(ANSI_PATTERN.sub("", colored), plain)
         self.assertIn("\033[36mUNICORN BENCHMARKS\033[0m", colored)
         self.assertIn(
-            "\033[32mPASS  passed=2 failed=0 skipped=0 total=2\033[0m", colored
+            "\033[31mFAIL  passed=2 failed=0 skipped=0 total=2\033[0m", colored
         )
         self.assertIn("\033[36mRelease · arm64 · 5 iterations\033[0m", colored)
         self.assertIn("\033[1mIn-memory initialization\033[0m", colored)
@@ -172,6 +182,25 @@ echo 'routine xcodebuild output'
 echo 'routine xcodebuild diagnostic' >&2
 """
         )
+        metrics_export = []
+        for name, identifiers in EXPECTED_WORKLOAD_METRICS.items():
+            exported_metrics = []
+            for identifier in identifiers:
+                exported_metrics.append(
+                    {
+                        "identifier": identifier,
+                        "displayName": identifier,
+                        "unitOfMeasurement": "kB" if identifier == MEMORY else "s",
+                        "measurements": [1.0] * 5,
+                    }
+                )
+            metrics_export.append(
+                {
+                    "testIdentifier": f"UnicornCorePerformanceTests/{name}()",
+                    "testRuns": [{"metrics": exported_metrics}],
+                }
+            )
+        metrics_json = json.dumps(metrics_export, separators=(",", ":"))
         (self.tools / "xcrun").write_text(
             """#!/bin/sh
 if [ \"$1\" = swift ]; then
@@ -183,7 +212,13 @@ elif [ \"$4\" = summary ]; then
         printf '%s\\n' '{"result":"Passed","passedTests":7,"failedTests":0,"skippedTests":0,"totalTestCount":7}'
     fi
 elif [ \"$4\" = metrics ]; then
-    printf '%s\\n' '[]'
+    if [ \"${INCOMPLETE_METRICS:-0}\" = 1 ]; then
+        printf '%s\\n' '[]'
+    else
+        printf '%s\\n' '"""
+            + metrics_json
+            + """'
+    fi
 else
     echo 'unexpected xcrun invocation' >&2
     exit 1
@@ -280,6 +315,25 @@ fi
                 )
                 self.assertTrue(summary.is_file())
 
+    def test_passed_xctest_with_incomplete_metrics_fails_report(self) -> None:
+        result = self.run_make(
+            "benchmark-summary",
+            environment_updates={"INCOMPLETE_METRICS": "1"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "UNICORN BENCHMARKS  FAIL  passed=7 failed=0 skipped=0 total=7",
+            result.stdout,
+        )
+        self.assertIn("Benchmark measurements are incomplete.", result.stdout)
+        summary = (
+            Path(self.temporary_directory.name)
+            / "benchmark-summary"
+            / "Summary/benchmark-summary.json"
+        )
+        self.assertFalse(summary.exists())
+
     def test_standalone_summary_creates_configured_output_directories(self) -> None:
         root = Path(self.temporary_directory.name) / "standalone"
         result_bundle = root / "existing/Benchmark.xcresult"
@@ -370,7 +424,11 @@ fi
         result = self.run_make(
             "benchmark-native",
             fail=True,
-            environment_updates={"LEAVE_XCRESULT": "1", "FAILED_XCRESULT": "1"},
+            environment_updates={
+                "LEAVE_XCRESULT": "1",
+                "FAILED_XCRESULT": "1",
+                "INCOMPLETE_METRICS": "1",
+            },
         )
 
         self.assertEqual(result.returncode, 2)
