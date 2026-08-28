@@ -15,6 +15,7 @@ on:
           - squirrel-automatic-ls-refresh
           - squirrel-official-installer
           - unicorn-supported-installer
+          - unicorn-post-approval-mode-enable
 
 permissions:
   contents: read
@@ -97,7 +98,7 @@ jobs:
 
   unicorn-supported-installer:
     name: macOS 15 ARM64 supported Unicorn automatic activation
-    if: inputs.experiment == 'unicorn-supported-installer'
+    if: contains(fromJSON('["unicorn-supported-installer", "unicorn-post-approval-mode-enable"]'), inputs.experiment)
     runs-on: macos-15
     timeout-minutes: 30
 
@@ -107,6 +108,8 @@ jobs:
 
       - name: Run bounded Unicorn automatic-activation experiment
         id: producer
+        env:
+          UNICORN_EXPERIMENT: ${{ inputs.experiment }}
         run: Tests/HostedUnicornAutoActivation/run.sh
 
       - name: Restore initial source and tracked non-preexisting state
@@ -124,7 +127,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: hosted-arm64-unicorn-supported-installer-${{ github.run_id }}-${{ github.run_attempt }}
+          name: hosted-arm64-${{ inputs.experiment }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/HostedUnicornAutoActivation/evidence
           if-no-files-found: error
           retention-days: 14

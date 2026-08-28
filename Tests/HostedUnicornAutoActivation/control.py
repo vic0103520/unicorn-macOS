@@ -36,7 +36,12 @@ LAYOUT_TYPE = "TISTypeKeyboardLayout"
 EXPECTED_TEXT = "λ"
 EXPECTED_SCALARS = ["U+03BB"]
 AUTOMATIC_DEADLINE_SECONDS = 15
-EXPERIMENT = "unicorn-supported-installer"
+SUPPORTED_INSTALLER_EXPERIMENT = "unicorn-supported-installer"
+POST_APPROVAL_ENABLE_EXPERIMENT = "unicorn-post-approval-mode-enable"
+ALLOWED_EXPERIMENTS = {
+    SUPPORTED_INSTALLER_EXPERIMENT,
+    POST_APPROVAL_ENABLE_EXPERIMENT,
+}
 
 
 def load_json(path: pathlib.Path, default: Any = None) -> Any:
@@ -63,7 +68,11 @@ def sha256(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
+def initialize(
+    evidence: pathlib.Path, installed_app: pathlib.Path, experiment: str
+) -> None:
+    if experiment not in ALLOWED_EXPERIMENTS:
+        raise ValueError(f"Unsupported Unicorn experiment: {experiment}")
     evidence.mkdir(parents=True, exist_ok=True)
     home = pathlib.Path.home()
     tracked_paths = [
@@ -78,7 +87,7 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
         {
             "schemaVersion": 1,
             "createdAt": shared.timestamp(),
-            "experiment": EXPERIMENT,
+            "experiment": experiment,
             "selectionStarted": False,
             "initialCurrentSourceID": None,
             "initialCurrentSourceType": None,
@@ -95,7 +104,7 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
         {
             "schemaVersion": 1,
             "probe": "github-hosted-arm64-unicorn-automatic-activation",
-            "experiment": EXPERIMENT,
+            "experiment": experiment,
             "status": "running",
             "startedAt": shared.timestamp(),
             "actionsRunURL": github_run_url(),
@@ -125,7 +134,16 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
                 },
             },
             "treatment": {
-                "name": "checked-in supported Unicorn installer plus public TIS convergence",
+                "name": (
+                    "checked-in supported Unicorn installer plus one repeated exact target enable after approval"
+                    if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                    else "checked-in supported Unicorn installer plus public TIS convergence"
+                ),
+                "changedCondition": (
+                    "refresh exact live sources after Allow and repeat only public target-mode enablement"
+                    if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                    else "none: first equivalent-treatment arm"
+                ),
                 "installerPath": "install.sh",
                 "installationLocation": str(installed_app),
                 "registration": [
@@ -136,6 +154,15 @@ def initialize(evidence: pathlib.Path, installed_app: pathlib.Path) -> None:
                 "approval": "exact semantic System Settings Allow action if required",
                 "selection": "public TISSelectInputSource for exact source Vic-Shih.inputmethod.unicorn.unicorn with declared mode Vic-Shih.inputmethod.unicorn",
                 "activation": "focused AppKit client plus physical backslash-l-enter input",
+                "counterfactualBasis": (
+                    {
+                        "priorRunURL": "https://github.com/vic0103520/unicorn-macOS/actions/runs/33175943523",
+                        "priorEarliestDivergence": "after Allow enabled the exact parent, the exact target mode remained disabled and TISSelectInputSource returned -50",
+                        "singleChangedCondition": "repeat public TISEnableInputSource for the refreshed exact target after approval",
+                    }
+                    if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                    else None
+                ),
             },
             "boundedScope": {
                 "runnerLabel": "macos-15",
@@ -1096,10 +1123,13 @@ def run_experiment(
     helper: pathlib.Path,
     client_app: pathlib.Path,
     installed_app: pathlib.Path,
+    experiment: str,
 ) -> int:
+    if experiment not in ALLOWED_EXPERIMENTS:
+        raise ValueError(f"Unsupported Unicorn experiment: {experiment}")
     report: dict[str, Any] = {
         "startedAt": shared.timestamp(),
-        "experiment": EXPERIMENT,
+        "experiment": experiment,
         "stageOrder": [
             "same-Aqua-user Dvorak public selection and physical-event control",
             "exact installed Unicorn public TIS registration",
@@ -1144,6 +1174,19 @@ def run_experiment(
         report["systemSettingsApproval"] = approve_if_required(
             driver, helper, evidence
         )
+        if experiment == POST_APPROVAL_ENABLE_EXPERIMENT:
+            report["postApprovalTargetEnablement"] = native_transition(
+                helper,
+                evidence,
+                "unicorn-target-reenable-after-approval",
+                ["enable-target"],
+            )
+        else:
+            report["postApprovalTargetEnablement"] = {
+                "attempted": False,
+                "reason": "first arm does not repeat target enablement after approval",
+                "singleChangedCondition": False,
+            }
         report["sameSessionBoundary"] = {
             "timestamp": shared.timestamp(),
             "uid": os.getuid(),
@@ -1207,6 +1250,12 @@ def earliest_divergence(report: dict[str, Any]) -> str:
         .get("sourceImmediatelyAfterAllow", {})
         .get("data", {})
     )
+    post_approval_enablement = report.get("postApprovalTargetEnablement", {})
+    eligibility = (
+        post_approval_enablement.get("data", {}).get("after", {})
+        if post_approval_enablement.get("attempted") is not False
+        else after_approval
+    )
     selection = report.get("unicornSelection", {}).get("data", {})
     activation = report.get("automaticActivation", {})
     if installation and not installation.get("app", {}).get("exists"):
@@ -1215,7 +1264,7 @@ def earliest_divergence(report: dict[str, Any]) -> str:
         return "public TIS registration"
     if registration.get("after", {}).get("enumeration", {}).get("unicornSourceCount", 0) == 0:
         return "exact Unicorn source enumeration after registration"
-    if after_approval.get("prerequisites", {}).get("allDocumentedSelectionPrerequisitesSatisfied") is not True:
+    if eligibility.get("prerequisites", {}).get("allDocumentedSelectionPrerequisitesSatisfied") is not True:
         return "exact source enablement or required approval"
     if selection.get("selectionVerified") is not True:
         return "exact Unicorn source selection"
@@ -1298,6 +1347,7 @@ def main() -> int:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("evidence", type=pathlib.Path)
     init_parser.add_argument("installed_app", type=pathlib.Path)
+    init_parser.add_argument("experiment", choices=sorted(ALLOWED_EXPERIMENTS))
     preflight_parser = subparsers.add_parser("preflight")
     preflight_parser.add_argument("evidence", type=pathlib.Path)
     preflight_parser.add_argument("helper", type=pathlib.Path)
@@ -1315,12 +1365,13 @@ def main() -> int:
     run_parser.add_argument("helper", type=pathlib.Path)
     run_parser.add_argument("client_app", type=pathlib.Path)
     run_parser.add_argument("installed_app", type=pathlib.Path)
+    run_parser.add_argument("experiment", choices=sorted(ALLOWED_EXPERIMENTS))
     finalize_parser = subparsers.add_parser("finalize")
     finalize_parser.add_argument("evidence", type=pathlib.Path)
     finalize_parser.add_argument("producer_status", type=int)
     arguments = parser.parse_args()
     if arguments.command == "init":
-        initialize(arguments.evidence, arguments.installed_app)
+        initialize(arguments.evidence, arguments.installed_app, arguments.experiment)
     elif arguments.command == "preflight":
         preflight(arguments.evidence, arguments.helper)
     elif arguments.command == "record-build":
@@ -1335,6 +1386,7 @@ def main() -> int:
             arguments.helper,
             arguments.client_app,
             arguments.installed_app,
+            arguments.experiment,
         )
     elif arguments.command == "finalize":
         finalize(arguments.evidence, arguments.producer_status)

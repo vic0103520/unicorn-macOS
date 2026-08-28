@@ -299,7 +299,17 @@ private func enableTarget(outputPath: String) throws -> Int32 {
     let before = snapshotValue(label: "immediately-before-target-enablement")
     let targets = targetSources(allSources())
     let status = targets.count == 1 ? TISEnableInputSource(targets[0]) : nil
-    Thread.sleep(forTimeInterval: 0.5)
+    var refreshAttempts = 0
+    if status != nil {
+        for attempt in 1...30 {
+            refreshAttempts = attempt
+            let refreshed = targetSources(allSources())
+            if refreshed.count == 1, boolProperty(refreshed[0], enabledKey) == true {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+    }
     let result: [String: Any] = [
         "schemaVersion": 1,
         "operation": "TISEnableInputSource for exact Unicorn target",
@@ -309,6 +319,7 @@ private func enableTarget(outputPath: String) throws -> Int32 {
         "exactTargetCount": targets.count,
         "target": sourceSummary(targets.count == 1 ? targets[0] : nil),
         "status": jsonValue(status),
+        "refreshAttempts": refreshAttempts,
         "before": before,
         "after": snapshotValue(label: "after-target-enablement-and-live-refresh"),
     ]

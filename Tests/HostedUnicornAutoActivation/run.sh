@@ -12,11 +12,16 @@ BUILT_APP="$PRODUCTS/Release/unicorn.app"
 STAGING="$BUILD_ROOT/supported-installer"
 INSTALLED_APP="$HOME/Library/Input Methods/unicorn.app"
 PRODUCER_EXIT="$EVIDENCE/producer-exit-code.txt"
+EXPERIMENT="${UNICORN_EXPERIMENT:-unicorn-supported-installer}"
+case "$EXPERIMENT" in
+    unicorn-supported-installer|unicorn-post-approval-mode-enable) ;;
+    *) printf 'Unsupported UNICORN_EXPERIMENT: %s\n' "$EXPERIMENT" >&2; exit 64 ;;
+esac
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$EVIDENCE" "$BIN" "$CLIENT_APP/Contents/MacOS"
 python3 "$ROOT/Tests/HostedUnicornAutoActivation/control.py" \
-    init "$EVIDENCE" "$INSTALLED_APP"
+    init "$EVIDENCE" "$INSTALLED_APP" "$EXPERIMENT"
 
 record_phase() {
     local phase="$1"
@@ -193,5 +198,5 @@ record_phase "run-supported-unicorn-installer" "completed"
 
 record_phase "select-activate-and-compose-without-prelaunch" "started"
 python3 "$ROOT/Tests/HostedUnicornAutoActivation/control.py" \
-    run "$EVIDENCE" "$HELPER" "$CLIENT_APP" "$INSTALLED_APP"
+    run "$EVIDENCE" "$HELPER" "$CLIENT_APP" "$INSTALLED_APP" "$EXPERIMENT"
 record_phase "select-activate-and-compose-without-prelaunch" "completed"
