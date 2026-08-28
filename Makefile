@@ -208,6 +208,7 @@ benchmark: benchmark-native
 benchmark-native:
 	@echo "Running UnicornCore benchmarks in Release on $(NATIVE_ARCH)..."
 	@rm -rf "$(BENCHMARK_ROOT)"
+	@rm -f "$(BENCHMARK_XCODE_SUMMARY)" "$(BENCHMARK_XCODE_METRICS)" "$(BENCHMARK_SUMMARY)"
 	@mkdir -p "$(dir $(BENCHMARK_RESULT_BUNDLE))" "$(BENCHMARK_SUMMARY_DIR)"
 	@test ! -e "$(BENCHMARK_RESULT_BUNDLE)" || \
 		{ $(call BENCHMARK_FAILURE,Refusing stale benchmark result: path=$(BENCHMARK_RESULT_BUNDLE)); exit 1; }

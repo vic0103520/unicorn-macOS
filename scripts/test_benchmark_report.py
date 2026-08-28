@@ -339,6 +339,33 @@ fi
         self.assertNotIn("UNICORN BENCHMARKS", result.stdout)
         self.assertNotIn("\033[", result.stdout)
 
+    def test_benchmark_start_removes_independently_configured_outputs(self) -> None:
+        output_directory = Path(self.temporary_directory.name) / "external-outputs"
+        output_directory.mkdir()
+        xcode_summary = output_directory / "xcode-summary.json"
+        xcode_metrics = output_directory / "xcode-metrics.json"
+        benchmark_summary = output_directory / "benchmark-summary.json"
+        sibling = output_directory / "keep.txt"
+        for output in (xcode_summary, xcode_metrics, benchmark_summary):
+            output.write_text("stale\n")
+        sibling.write_text("keep\n")
+
+        result = self.run_make(
+            "benchmark-native",
+            fail=True,
+            make_variables=[
+                f"BENCHMARK_XCODE_SUMMARY={xcode_summary}",
+                f"BENCHMARK_XCODE_METRICS={xcode_metrics}",
+                f"BENCHMARK_SUMMARY={benchmark_summary}",
+            ],
+        )
+
+        self.assertEqual(result.returncode, 2)
+        for output in (xcode_summary, xcode_metrics, benchmark_summary):
+            self.assertFalse(output.exists())
+        self.assertTrue(output_directory.is_dir())
+        self.assertEqual(sibling.read_text(), "keep\n")
+
     def test_benchmark_failure_with_result_emits_summary_once(self) -> None:
         result = self.run_make(
             "benchmark-native",
