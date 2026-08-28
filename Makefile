@@ -234,6 +234,9 @@ benchmark-native:
 		status=$$?; \
 		cat "$$build_log" >&2; \
 		$(call BENCHMARK_FAILURE,Core benchmarks: configuration=Release arch=$(NATIVE_ARCH) exit=$$status); \
+		if [ -e "$(BENCHMARK_RESULT_BUNDLE)" ]; then \
+			$(MAKE) --no-print-directory benchmark-summary || :; \
+		fi; \
 		exit "$$status"; \
 	fi
 	+@$(MAKE) --no-print-directory benchmark-summary

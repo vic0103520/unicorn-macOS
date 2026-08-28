@@ -144,21 +144,30 @@ class BenchmarkMakeTests(unittest.TestCase):
         self.xcodebuild = self.tools / "xcodebuild"
         self.xcodebuild.write_text(
             """#!/bin/sh
-if [ \"${FAIL_XCODEBUILD:-0}\" = 1 ]; then
-    echo 'actionable benchmark failure' >&2
-    exit 42
-fi
-if [ \"${FAIL_BENCHMARK_REPORT:-0}\" = 1 ] && [ \"${1:-}\" = -version ]; then
+first_argument=${1:-}
+if [ \"${FAIL_BENCHMARK_REPORT:-0}\" = 1 ] && [ \"$first_argument\" = -version ]; then
     echo 'benchmark report context failure' >&2
     exit 43
 fi
+result_bundle=
+is_test=0
 while [ \"$#\" -gt 0 ]; do
-    if [ \"$1\" = '-resultBundlePath' ]; then
+    if [ \"$1\" = test ]; then
+        is_test=1
+    elif [ \"$1\" = '-resultBundlePath' ]; then
         shift
-        mkdir -p \"$1\"
+        result_bundle=$1
     fi
     shift
 done
+if [ \"${FAIL_XCODEBUILD:-0}\" = 1 ] && [ \"$is_test\" = 1 ]; then
+    if [ \"${LEAVE_XCRESULT:-0}\" = 1 ]; then
+        mkdir -p \"$result_bundle\"
+    fi
+    echo 'actionable benchmark failure' >&2
+    exit 42
+fi
+mkdir -p \"$result_bundle\"
 echo 'routine xcodebuild output'
 echo 'routine xcodebuild diagnostic' >&2
 """
@@ -168,7 +177,11 @@ echo 'routine xcodebuild diagnostic' >&2
 if [ \"$1\" = swift ]; then
     echo 'Swift version test'
 elif [ \"$4\" = summary ]; then
-    printf '%s\\n' '{"result":"Passed","passedTests":7,"failedTests":0,"skippedTests":0,"totalTestCount":7}'
+    if [ \"${FAILED_XCRESULT:-0}\" = 1 ]; then
+        printf '%s\\n' '{"result":"Failed","passedTests":6,"failedTests":1,"skippedTests":0,"totalTestCount":7}'
+    else
+        printf '%s\\n' '{"result":"Passed","passedTests":7,"failedTests":0,"skippedTests":0,"totalTestCount":7}'
+    fi
 elif [ \"$4\" = metrics ]; then
     printf '%s\\n' '[]'
 else
@@ -325,6 +338,23 @@ fi
         self.assertIn("Core benchmarks: configuration=Release arch=arm64 exit=42", result.stdout)
         self.assertNotIn("UNICORN BENCHMARKS", result.stdout)
         self.assertNotIn("\033[", result.stdout)
+
+    def test_benchmark_failure_with_result_emits_summary_once(self) -> None:
+        result = self.run_make(
+            "benchmark-native",
+            fail=True,
+            environment_updates={"LEAVE_XCRESULT": "1", "FAILED_XCRESULT": "1"},
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("actionable benchmark failure", result.stdout)
+        self.assertEqual(
+            result.stdout.count(
+                "UNICORN BENCHMARKS  FAIL  "
+                "passed=6 failed=1 skipped=0 total=7"
+            ),
+            1,
+        )
 
     def test_benchmark_failure_color_respects_environment(self) -> None:
         colored = self.run_make("benchmark-native", fail=True, interactive=True)
