@@ -851,11 +851,7 @@ def semantic_input_source_add(
                 (
                     "xpath",
                     '//XCUIElementTypeStaticText[@value="Input Sources"]/following-sibling::XCUIElementTypeButton[@label="Edit…"]',
-                ),
-                (
-                    "xpath",
-                    '//XCUIElementTypeStaticText[@value="Input Sources"]/parent::XCUIElementTypeGroup/XCUIElementTypeButton[@label="Edit…"]',
-                ),
+                )
             ],
             lambda item: item.get("label") == "Edit…"
             and truthy(item.get("enabled"))
