@@ -16,6 +16,7 @@ on:
           - squirrel-official-installer
           - unicorn-supported-installer
           - unicorn-post-approval-mode-enable
+          - unicorn-semantic-input-source-add
 
 permissions:
   contents: read
@@ -98,7 +99,7 @@ jobs:
 
   unicorn-supported-installer:
     name: macOS 15 ARM64 supported Unicorn automatic activation
-    if: contains(fromJSON('["unicorn-supported-installer", "unicorn-post-approval-mode-enable"]'), inputs.experiment)
+    if: contains(fromJSON('["unicorn-supported-installer", "unicorn-post-approval-mode-enable", "unicorn-semantic-input-source-add"]'), inputs.experiment)
     runs-on: macos-15
     timeout-minutes: 30
 

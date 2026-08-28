@@ -38,9 +38,11 @@ EXPECTED_SCALARS = ["U+03BB"]
 AUTOMATIC_DEADLINE_SECONDS = 15
 SUPPORTED_INSTALLER_EXPERIMENT = "unicorn-supported-installer"
 POST_APPROVAL_ENABLE_EXPERIMENT = "unicorn-post-approval-mode-enable"
+SEMANTIC_ADD_EXPERIMENT = "unicorn-semantic-input-source-add"
 ALLOWED_EXPERIMENTS = {
     SUPPORTED_INSTALLER_EXPERIMENT,
     POST_APPROVAL_ENABLE_EXPERIMENT,
+    SEMANTIC_ADD_EXPERIMENT,
 }
 
 
@@ -135,14 +137,22 @@ def initialize(
             },
             "treatment": {
                 "name": (
-                    "checked-in supported Unicorn installer plus one repeated exact target enable after approval"
-                    if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
-                    else "checked-in supported Unicorn installer plus public TIS convergence"
+                    "checked-in supported Unicorn installer plus semantic System Settings Input Sources Add"
+                    if experiment == SEMANTIC_ADD_EXPERIMENT
+                    else (
+                        "checked-in supported Unicorn installer plus one repeated exact target enable after approval"
+                        if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                        else "checked-in supported Unicorn installer plus public TIS convergence"
+                    )
                 ),
                 "changedCondition": (
-                    "refresh exact live sources after Allow and repeat only public target-mode enablement"
-                    if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
-                    else "none: first equivalent-treatment arm"
+                    "use Unicorn's documented end-user System Settings Input Sources Add path after approval"
+                    if experiment == SEMANTIC_ADD_EXPERIMENT
+                    else (
+                        "refresh exact live sources after Allow and repeat only public target-mode enablement"
+                        if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                        else "none: first equivalent-treatment arm"
+                    )
                 ),
                 "installerPath": "install.sh",
                 "installationLocation": str(installed_app),
@@ -156,12 +166,20 @@ def initialize(
                 "activation": "focused AppKit client plus physical backslash-l-enter input",
                 "counterfactualBasis": (
                     {
-                        "priorRunURL": "https://github.com/vic0103520/unicorn-macOS/actions/runs/33175943523",
-                        "priorEarliestDivergence": "after Allow enabled the exact parent, the exact target mode remained disabled and TISSelectInputSource returned -50",
-                        "singleChangedCondition": "repeat public TISEnableInputSource for the refreshed exact target after approval",
+                        "priorRunURL": "https://github.com/vic0103520/unicorn-macOS/actions/runs/33176545818",
+                        "priorEarliestDivergence": "the exact target mode remained disabled after a second post-approval public enable request",
+                        "singleChangedCondition": "replace only the ineffective repeated target-mode API request with Unicorn's documented semantic Input Sources Add action",
                     }
-                    if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
-                    else None
+                    if experiment == SEMANTIC_ADD_EXPERIMENT
+                    else (
+                        {
+                            "priorRunURL": "https://github.com/vic0103520/unicorn-macOS/actions/runs/33175943523",
+                            "priorEarliestDivergence": "after Allow enabled the exact parent, the exact target mode remained disabled and TISSelectInputSource returned -50",
+                            "singleChangedCondition": "repeat public TISEnableInputSource for the refreshed exact target after approval",
+                        }
+                        if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                        else None
+                    )
                 ),
             },
             "boundedScope": {
@@ -753,6 +771,243 @@ def approve_if_required(
     return result
 
 
+def element_ids(
+    driver: Any, session_id: str, strategy: str, value: str
+) -> list[str]:
+    response = driver.request(
+        "POST",
+        f"/session/{session_id}/elements",
+        {"using": strategy, "value": value},
+    )
+    elements = response.get("value", [])
+    return [
+        element_id
+        for item in elements
+        if isinstance(item, dict)
+        for element_id in [item.get(shared.ELEMENT_KEY) or item.get("ELEMENT")]
+        if isinstance(element_id, str)
+    ]
+
+
+def exact_semantic_element(
+    driver: Any,
+    session_id: str,
+    locators: list[tuple[str, str]],
+    predicate: Any,
+    description: str,
+    timeout: int = 20,
+) -> tuple[str, dict[str, Any]]:
+    deadline = time.monotonic() + timeout
+    last_candidates: list[dict[str, Any]] = []
+    while time.monotonic() < deadline:
+        by_id: dict[str, dict[str, Any]] = {}
+        for strategy, value in locators:
+            try:
+                for element_id in element_ids(driver, session_id, strategy, value):
+                    by_id.setdefault(
+                        element_id,
+                        semantic_element(driver, session_id, element_id),
+                    )
+            except Exception:
+                continue
+        last_candidates = list(by_id.values())
+        matching = [candidate for candidate in last_candidates if predicate(candidate)]
+        if len(matching) == 1:
+            return str(matching[0]["elementId"]), matching[0]
+        if len(matching) > 1:
+            raise RuntimeError(
+                f"Refusing ambiguous {description}; exact matches: {matching}"
+            )
+        time.sleep(0.5)
+    raise RuntimeError(
+        f"No unique exact semantic {description}; candidates: {last_candidates}"
+    )
+
+
+def semantic_input_source_add(
+    driver: Any, helper: pathlib.Path, evidence: pathlib.Path
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "startedAt": shared.timestamp(),
+        "attempted": True,
+        "method": "Unicorn's documented System Settings Keyboard Input Sources Edit, Add, Unicorn, Add path through exact Accessibility semantics",
+        "usesOCRPixelsOrCoordinates": False,
+        "screenshotsDiagnosticOnly": True,
+        "semanticInputSourceAddCompleted": False,
+    }
+    session_id: str | None = None
+    try:
+        session_id, response = shared.create_bundle_session(
+            driver, "com.apple.systempreferences", {"appium:noReset": True}
+        )
+        result["session"] = {"created": True, "response": response}
+        result["keyboardPageSource"] = shared.save_source(
+            driver, session_id, evidence / "system-settings-keyboard-page.xml"
+        )
+        edit_id, edit = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeStaticText[@value="Input Sources"]/following-sibling::XCUIElementTypeButton[@label="Edit…"]',
+                ),
+                (
+                    "xpath",
+                    '//XCUIElementTypeStaticText[@value="Input Sources"]/parent::XCUIElementTypeGroup/XCUIElementTypeButton[@label="Edit…"]',
+                ),
+            ],
+            lambda item: item.get("label") == "Edit…"
+            and truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "Input Sources Edit button",
+        )
+        result["inputSourcesEditElement"] = edit
+        driver.request("POST", f"/session/{session_id}/element/{edit_id}/click", {})
+        time.sleep(0.5)
+        result["inputSourcesEditorSource"] = shared.save_source(
+            driver, session_id, evidence / "system-settings-input-sources-editor.xml"
+        )
+        result["inputSourcesEditorScreenshot"] = shared.save_screenshot(
+            driver, session_id, evidence / "system-settings-input-sources-editor.png"
+        )
+        add_trigger_id, add_trigger = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeButton[@label="Add Input Source…" or @label="Add Input Source..." or @label="Add" or @label="+"]',
+                ),
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeButton[@title="Add Input Source…" or @title="Add Input Source..." or @title="Add" or @title="+"]',
+                ),
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeButton[@identifier="add"]',
+                ),
+            ],
+            lambda item: (
+                item.get("label")
+                in {"Add Input Source…", "Add Input Source...", "Add", "+"}
+                or item.get("title")
+                in {"Add Input Source…", "Add Input Source...", "Add", "+"}
+                or item.get("identifier") == "add"
+            )
+            and truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "Add Input Source trigger",
+        )
+        result["addInputSourceTrigger"] = add_trigger
+        driver.request(
+            "POST", f"/session/{session_id}/element/{add_trigger_id}/click", {}
+        )
+        time.sleep(0.5)
+        result["addChooserSource"] = shared.save_source(
+            driver, session_id, evidence / "system-settings-add-input-source.xml"
+        )
+        search_id, search = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeSearchField',
+                )
+            ],
+            lambda item: truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "Add Input Source search field",
+        )
+        result["searchField"] = search
+        driver.request("POST", f"/session/{session_id}/element/{search_id}/click", {})
+        driver.request(
+            "POST",
+            f"/session/{session_id}/element/{search_id}/value",
+            {"text": "Unicorn", "value": list("Unicorn")},
+        )
+        time.sleep(1)
+        result["searchResultsSource"] = shared.save_source(
+            driver, session_id, evidence / "system-settings-unicorn-search-results.xml"
+        )
+        unicorn_id, unicorn = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeStaticText[@value="Unicorn" or @label="Unicorn" or @title="Unicorn"]',
+                )
+            ],
+            lambda item: (
+                item.get("value") == "Unicorn"
+                or item.get("label") == "Unicorn"
+                or item.get("title") == "Unicorn"
+            )
+            and truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "Unicorn search result",
+        )
+        result["unicornSearchResult"] = unicorn
+        driver.request("POST", f"/session/{session_id}/element/{unicorn_id}/click", {})
+        time.sleep(0.5)
+        add_id, add = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeButton[@label="Add" or @title="Add"]',
+                )
+            ],
+            lambda item: (
+                item.get("label") == "Add" or item.get("title") == "Add"
+            )
+            and truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "final Add button",
+        )
+        result["finalAddElement"] = add
+        driver.request("POST", f"/session/{session_id}/element/{add_id}/click", {})
+        result["addClickedAt"] = shared.timestamp()
+        time.sleep(1)
+        result["afterAddScreenshot"] = shared.save_screenshot(
+            driver, session_id, evidence / "system-settings-after-unicorn-add.png"
+        )
+        result["semanticInputSourceAddCompleted"] = True
+    except Exception as error:
+        result["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
+        }
+    finally:
+        if session_id:
+            try:
+                driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                result.setdefault("session", {})["deleted"] = True
+            except Exception as error:
+                result.setdefault("session", {})["deleteError"] = shared.bounded(
+                    str(error)
+                )
+    result["sourceImmediatelyAfterSemanticAdd"] = source_snapshot(
+        helper,
+        evidence,
+        "input-sources-after-semantic-add.json",
+        "immediately-after-semantic-input-source-add",
+    )
+    result["completedAt"] = shared.timestamp()
+    result["logs"] = capture_log_window(
+        evidence,
+        "semantic-add-system-log",
+        result["startedAt"],
+        result["completedAt"],
+        1000,
+    )
+    write_json(evidence / "semantic-input-source-add.json", result)
+    return result
+
+
 def create_client_session(
     driver: Any, client_app: pathlib.Path, evidence: pathlib.Path, name: str
 ) -> tuple[str, pathlib.Path, pathlib.Path]:
@@ -1174,18 +1429,35 @@ def run_experiment(
         report["systemSettingsApproval"] = approve_if_required(
             driver, helper, evidence
         )
-        if experiment == POST_APPROVAL_ENABLE_EXPERIMENT:
+        if experiment == SEMANTIC_ADD_EXPERIMENT:
+            report["semanticInputSourceAdd"] = semantic_input_source_add(
+                driver, helper, evidence
+            )
+            report["postApprovalTargetEnablement"] = {
+                "attempted": False,
+                "reason": "semantic Add replaces the ineffective repeated API request",
+                "singleChangedCondition": True,
+            }
+        elif experiment == POST_APPROVAL_ENABLE_EXPERIMENT:
             report["postApprovalTargetEnablement"] = native_transition(
                 helper,
                 evidence,
                 "unicorn-target-reenable-after-approval",
                 ["enable-target"],
             )
+            report["semanticInputSourceAdd"] = {
+                "attempted": False,
+                "reason": "this arm changes only repeated public mode enablement",
+            }
         else:
             report["postApprovalTargetEnablement"] = {
                 "attempted": False,
                 "reason": "first arm does not repeat target enablement after approval",
                 "singleChangedCondition": False,
+            }
+            report["semanticInputSourceAdd"] = {
+                "attempted": False,
+                "reason": "first arm uses only public registration and enablement APIs",
             }
         report["sameSessionBoundary"] = {
             "timestamp": shared.timestamp(),
@@ -1251,11 +1523,15 @@ def earliest_divergence(report: dict[str, Any]) -> str:
         .get("data", {})
     )
     post_approval_enablement = report.get("postApprovalTargetEnablement", {})
-    eligibility = (
-        post_approval_enablement.get("data", {}).get("after", {})
-        if post_approval_enablement.get("attempted") is not False
-        else after_approval
-    )
+    semantic_add = report.get("semanticInputSourceAdd", {})
+    if semantic_add.get("attempted") is True:
+        eligibility = semantic_add.get(
+            "sourceImmediatelyAfterSemanticAdd", {}
+        ).get("data", {})
+    elif post_approval_enablement.get("attempted") is not False:
+        eligibility = post_approval_enablement.get("data", {}).get("after", {})
+    else:
+        eligibility = after_approval
     selection = report.get("unicornSelection", {}).get("data", {})
     activation = report.get("automaticActivation", {})
     if installation and not installation.get("app", {}).get("exists"):

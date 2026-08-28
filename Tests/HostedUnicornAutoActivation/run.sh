@@ -14,7 +14,7 @@ INSTALLED_APP="$HOME/Library/Input Methods/unicorn.app"
 PRODUCER_EXIT="$EVIDENCE/producer-exit-code.txt"
 EXPERIMENT="${UNICORN_EXPERIMENT:-unicorn-supported-installer}"
 case "$EXPERIMENT" in
-    unicorn-supported-installer|unicorn-post-approval-mode-enable) ;;
+    unicorn-supported-installer|unicorn-post-approval-mode-enable|unicorn-semantic-input-source-add) ;;
     *) printf 'Unsupported UNICORN_EXPERIMENT: %s\n' "$EXPERIMENT" >&2; exit 64 ;;
 esac
 
