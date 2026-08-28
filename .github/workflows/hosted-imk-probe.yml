@@ -70,6 +70,7 @@ jobs:
       - name: Run bounded Squirrel activation experiment
         id: producer
         env:
+          GH_TOKEN: ${{ github.token }}
           SQUIRREL_EXPERIMENT: ${{ inputs.experiment }}
         run: Tests/HostedThirdPartyIMControl/run.sh
 

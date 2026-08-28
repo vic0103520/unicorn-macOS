@@ -197,10 +197,16 @@ record_phase "runner-preflight" "completed"
 record_phase "download-and-verify-official-release" "started"
 curl --fail --location --retry 3 --show-error --silent \
     -H 'Accept: application/vnd.github+json' \
+    -H "Authorization: Bearer $GH_TOKEN" \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    --dump-header "$EVIDENCE/official-release-api.headers.txt" \
     'https://api.github.com/repos/rime/squirrel/releases/tags/1.1.2' \
     --output "$EVIDENCE/official-release-api.json"
 curl --fail --location --retry 3 --show-error --silent \
     -H 'Accept: application/vnd.github+json' \
+    -H "Authorization: Bearer $GH_TOKEN" \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    --dump-header "$EVIDENCE/release-commit-api.headers.txt" \
     'https://api.github.com/repos/rime/squirrel/commits/876adebaf2f612951dcdca8a591de65401222b9a' \
     --output "$EVIDENCE/release-commit-api.json"
 python3 - \
