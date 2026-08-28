@@ -11,7 +11,8 @@ This file is the repository-wide operating guide for contributors and coding age
 | Swift coding conventions | [`docs/STYLE_GUIDE.md`](docs/STYLE_GUIDE.md) |
 | Technical security, signing, installer, integrity, and distribution behavior | [`docs/specs/security_and_distribution.md`](docs/specs/security_and_distribution.md) |
 | Documentation writing and review standards | [`docs/DOCUMENTATION_GUIDE.md`](docs/DOCUMENTATION_GUIDE.md) |
-| Build, test, lint, install, and release commands | [`Makefile`](Makefile) |
+| Build, test, benchmark, lint, install, and release commands | [`Makefile`](Makefile) |
+| Deterministic core benchmark workloads, artifacts, and interpretation | [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md) |
 
 When documentation conflicts with implementation or automation, verify the current source, project settings, scripts, tests, workflows, and published artifacts before updating the canonical owner. Describe desired but unimplemented behavior as future work, never as current behavior.
 
@@ -31,6 +32,7 @@ The Xcode project is wrapped by the Makefile:
 
 ```sh
 make test
+make benchmark
 make lint
 make build
 make install
@@ -40,8 +42,9 @@ make coverage
 - `make test` runs the hostless `UnicornCoreTests` bundle on the host architecture with coverage enabled, then builds a Debug app for arm64 and x86_64 and verifies both slices with `lipo`. Only the host-architecture tests execute.
 - Test diagnostics and coverage data are stored in `build/Test/Results/UnicornCoreTests.xcresult`. All test intermediates stay under the ignored `build/Test/` directory.
 - `make coverage` reruns the standard test path and prints a readable report from that `.xcresult` bundle.
+- `make benchmark` runs only the hostless `UnicornCorePerformanceTests` plan against optimized Release `UnicornCore` on the native architecture. Benchmark results and machine-readable summaries stay under `build/Benchmark/`; see [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `make build` performs a universal arm64 and x86_64 Release build by default and overrides Xcode signing with the ad-hoc identity `-`; override `ARCHS` to request different slices.
-- `make test-native`, `make test-summary`, `make build-universal`, and `make coverage-report` expose the reusable stages behind the standard targets.
+- `make test-native`, `make test-summary`, `make benchmark-native`, `make benchmark-summary`, `make build-universal`, and `make coverage-report` expose the reusable stages behind the standard targets.
 - `make install` builds, replaces the app in `~/Library/Input Methods/`, and registers it with Launch Services.
 
 The hostless suite uses Swift Testing for engine transitions, trie-backed lookup, candidates, history, limits, and presentation calculations.
@@ -60,6 +63,8 @@ Use standard `git` commands for local repository state such as branches, commits
 - `UnicornCore/Trie.swift`: immutable symbol trie.
 - `UnicornCore/FunctionalHelpers.swift`: the project's `|>` and `>>=` operators.
 - `UnicornCoreTests/EngineTests.swift`: Swift Testing engine and presentation-model tests.
+- `UnicornCorePerformanceTests/CoreWorkloadPerformanceTests.swift`: deterministic XCTest performance workloads.
+- `docs/BENCHMARKING.md`: benchmark command, artifacts, workloads, and interpretation limits.
 - `unicorn/InputController.swift`: InputMethodKit integration.
 - `unicorn/keymap.json`: bundled symbol data.
 - `.github/workflows/`: pull-request CI and tagged-release automation.
