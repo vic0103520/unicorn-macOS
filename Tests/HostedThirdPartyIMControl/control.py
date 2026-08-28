@@ -136,7 +136,8 @@ def initialize(
                 "privatePreferenceOrAuthorizationDatabaseEdited": False,
                 "packageInstallerOrPostinstallExecuted": experiment
                 == "squirrel-official-installer",
-                "systemInputMethodsDirectoryUsed": False,
+                "systemInputMethodsDirectoryUsed": experiment
+                == OFFICIAL_INSTALLER_EXPERIMENT,
                 "securityWeakened": False,
             },
             "authoritativeContract": {
@@ -1223,6 +1224,7 @@ def automatic_activation_proof(
     driver: Any,
     helper: pathlib.Path,
     client_app: pathlib.Path,
+    installed_app: pathlib.Path,
     evidence: pathlib.Path,
     name: str,
     trigger_started_at: str | None = None,
@@ -1391,13 +1393,7 @@ def automatic_activation_proof(
             state["directLaunch"] = {
                 "pid": int(exact_pids[0]),
                 "executablePath": str(
-                    pathlib.Path.home()
-                    / "Library"
-                    / "Input Methods"
-                    / "Squirrel.app"
-                    / "Contents"
-                    / "MacOS"
-                    / EXECUTABLE_NAME
+                    installed_app / "Contents" / "MacOS" / EXECUTABLE_NAME
                 ),
                 "launchedAt": result["startedAt"],
                 "launchedByUID": os.getuid(),
@@ -1560,6 +1556,7 @@ def run_automatic_control(
             driver,
             helper,
             client_app,
+            installed_app,
             evidence,
             experiment,
             nested(
