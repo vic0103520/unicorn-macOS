@@ -33,8 +33,10 @@ EXECUTABLE_NAME = "unicorn"
 DVORAK_ID = "com.apple.keylayout.Dvorak"
 US_ID = "com.apple.keylayout.US"
 LAYOUT_TYPE = "TISTypeKeyboardLayout"
-EXPECTED_TEXT = "λ"
-EXPECTED_SCALARS = ["U+03BB"]
+EXPECTED_TEXT = "←"
+EXPECTED_SCALARS = ["U+2190"]
+COMPOSITION_INPUT = "\\l"
+COMPOSITION_TRIE_PATH = ["l", ">>"]
 AUTOMATIC_DEADLINE_SECONDS = 15
 SUPPORTED_INSTALLER_EXPERIMENT = "unicorn-supported-installer"
 POST_APPROVAL_ENABLE_EXPERIMENT = "unicorn-post-approval-mode-enable"
@@ -68,6 +70,28 @@ def sha256(path: pathlib.Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def composition_mapping(keymap_path: pathlib.Path) -> dict[str, Any]:
+    keymap = load_json(keymap_path, {})
+    node: Any = keymap
+    for component in COMPOSITION_TRIE_PATH:
+        node = node.get(component) if isinstance(node, dict) else None
+    candidates = node if isinstance(node, list) else []
+    first_candidate = candidates[0] if candidates else None
+    return {
+        "keymapPath": str(keymap_path),
+        "keymapSHA256": sha256(keymap_path),
+        "inputSequence": COMPOSITION_INPUT,
+        "activationPrefix": "\\",
+        "trieLookupCharacters": ["l"],
+        "keymapJSONPath": COMPOSITION_TRIE_PATH,
+        "candidates": candidates,
+        "firstCandidate": first_candidate,
+        "expectedCommittedText": EXPECTED_TEXT,
+        "expectedTextScalars": EXPECTED_SCALARS,
+        "assertionMatchesAuthoritativeFirstCandidate": first_candidate == EXPECTED_TEXT,
+    }
 
 
 def initialize(
@@ -119,6 +143,7 @@ def initialize(
             },
             "assertions": {
                 "composition": {
+                    "inputSequence": COMPOSITION_INPUT,
                     "physicalKeys": ["backslash", "l", "enter"],
                     "keyCodes": [42, 37, 36],
                     "expectedCommittedText": EXPECTED_TEXT,
@@ -362,6 +387,7 @@ def record_build(
         "file": shared.run_command(["file", str(executable)]),
     }
     mode_list = info.get("ComponentInputModeDict", {}).get("tsInputModeListKey", {})
+    mapping = composition_mapping(app / "Contents" / "Resources" / "keymap.json")
     value = {
         "timestamp": shared.timestamp(),
         "githubSHA": os.environ.get("GITHUB_SHA"),
@@ -371,6 +397,7 @@ def record_build(
         "executablePath": str(executable),
         "executableSHA256": sha256(executable),
         "keymapSHA256": sha256(app / "Contents" / "Resources" / "keymap.json"),
+        "compositionMapping": mapping,
         "clientExecutableSHA256": sha256(
             client_app / "Contents" / "MacOS" / "HostedIMKProbeClient"
         ),
@@ -383,6 +410,7 @@ def record_build(
         value["exactRevisionMatchesCheckout"]
         and value["bundleID"] == BUNDLE_ID
         and value["declaredSourceIDs"] == [DECLARED_MODE_ID]
+        and mapping["assertionMatchesAuthoritativeFirstCandidate"]
         and commands["lipo"].get("exitCode") == 0
         and "arm64" in commands["lipo"].get("stdout", "")
         and commands["codesignVerify"].get("exitCode") == 0
@@ -1300,6 +1328,24 @@ def automatic_activation(
             current_id(result["sourceAtTrigger"]) == TARGET_SOURCE_ID
             and current_bundle(result["sourceAtTrigger"]) == BUNDLE_ID
         )
+        build_identity = load_json(evidence / "build-identity.json", {})
+        observed_before_commit = (
+            keys[-2].get("clientDiagnosticsAfter", {}) if len(keys) >= 2 else {}
+        )
+        composition_evidence = {
+            "observedInput": {
+                "physicalKeys": [key.get("label") for key in keys],
+                "keyCodes": [key.get("keyCode") for key in keys],
+                "markedTextBeforeCommit": observed_before_commit.get("text"),
+                "markedTextScalarsBeforeCommit": observed_before_commit.get("textScalars"),
+            },
+            "authoritativeBundledMapping": build_identity.get("compositionMapping"),
+            "committedOutput": {
+                "text": final_diagnostics.get("text"),
+                "textScalars": final_diagnostics.get("textScalars"),
+                "hasMarkedText": final_diagnostics.get("hasMarkedText"),
+            },
+        }
         success = (
             exact_source
             and exact_pid is not None
@@ -1329,6 +1375,7 @@ def automatic_activation(
                 "correlatedEndpointObserved": endpoint["correlatedEndpointObserved"],
                 "markedCompositionObserved": bool(marked),
                 "markedCompositionSamples": marked[:12],
+                "compositionEvidence": composition_evidence,
                 "finalClientDiagnostics": final_diagnostics,
                 "sourceSelectedAtTrigger": exact_source,
                 "exactTextAssertionPassed": exact_text,
