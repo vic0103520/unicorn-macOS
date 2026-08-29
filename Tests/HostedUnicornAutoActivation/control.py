@@ -13,6 +13,7 @@ import os
 import pathlib
 import plistlib
 import pwd
+import re
 import shutil
 import stat
 import subprocess
@@ -523,7 +524,8 @@ def capture_log_window(
         predicate,
     ]
     completed = subprocess.run(command, capture_output=True, text=True, timeout=45, check=False)
-    lines = completed.stdout.splitlines()[-limit:]
+    matched_lines = completed.stdout.splitlines()
+    lines = matched_lines[-limit:]
     path = evidence / f"{name}.jsonl"
     path.write_text("\n".join(lines) + ("\n" if lines else ""))
     result = {
@@ -531,8 +533,11 @@ def capture_log_window(
         "exitCode": completed.returncode,
         "windowStart": start.isoformat(),
         "windowEnd": end.isoformat(),
+        "matchedLineCount": len(matched_lines),
         "retainedLineCount": len(lines),
         "retainedTailLimit": limit,
+        "retainedTailTruncated": len(matched_lines) > limit,
+        "predicate": predicate,
         "path": path.name,
         "stderr": shared.bounded(completed.stderr, 16_384),
     }
@@ -1149,7 +1154,10 @@ def dvorak_control(
 
 
 def parse_endpoint_evidence(
-    path: pathlib.Path, server_pid: int | None, client_pid: int | None
+    path: pathlib.Path,
+    server_pid: int | None,
+    client_pid: int | None,
+    collection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
     try:
@@ -1237,12 +1245,21 @@ def parse_endpoint_evidence(
         "/System/Library/Frameworks/InputMethodKit.framework/Versions/A/Resources/"
         "imklaunchagent"
     )
-    registration_service = [
+    all_registration_services = [
         event
         for event in events
-        if event.get("processID") == server_pid
-        and "name=com.apple.inputmethodkit.setxpcendpoint" in lower_message(event)
+        if "name=com.apple.inputmethodkit.setxpcendpoint" in lower_message(event)
         and "peer[" not in lower_message(event)
+    ]
+    registration_service = [
+        event
+        for event in all_registration_services
+        if event.get("processID") == server_pid
+    ]
+    other_process_registration_services = [
+        event
+        for event in all_registration_services
+        if event.get("processID") != server_pid
     ]
     registration_peer_marker = (
         f"setxpcendpoint.peer[{server_pid}]" if server_pid else None
@@ -1274,13 +1291,22 @@ def parse_endpoint_evidence(
         and "name=(anonymous)" in lower_message(event)
     ]
     anonymous_peer_marker = f".peer[{client_pid}]" if client_pid else None
-    anonymous_server_peer = [
+    anonymous_client_peers = [
         event
         for event in events
-        if event.get("processID") == server_pid
-        and anonymous_peer_marker
+        if anonymous_peer_marker
         and anonymous_peer_marker in lower_message(event)
         and "com.apple.xpc.anonymous." in lower_message(event)
+    ]
+    anonymous_server_peer = [
+        event
+        for event in anonymous_client_peers
+        if event.get("processID") == server_pid
+    ]
+    anonymous_other_process_peers = [
+        event
+        for event in anonymous_client_peers
+        if event.get("processID") != server_pid
     ]
     server_activation = [
         event
@@ -1339,6 +1365,60 @@ def parse_endpoint_evidence(
         topology = "not-observed"
 
     internal_endpoint_observed = registration_observed or serving_channel_observed
+    exact_server_xpc = [
+        event
+        for event in events
+        if event.get("processID") == server_pid
+        and event.get("subsystem") == "com.apple.xpc"
+    ]
+    connection_names: set[str] = set()
+    for event in exact_server_xpc:
+        match = re.search(r"(?:^|\s)name=([^\s]+)", message(event))
+        if match:
+            connection_names.add(match.group(1))
+    candidate_events = [
+        *all_registration_services,
+        *registration_peer,
+        *registration_receipt,
+        *anonymous_client_peers,
+        *server_activation,
+        *request_peer,
+        *request_receipt,
+        *connection_name_refusal,
+        *endpoint_invalid,
+        *server_initialization,
+    ]
+    candidate_processes = sorted(
+        {
+            (
+                event.get("processID"),
+                str(event.get("processImagePath", "")),
+            )
+            for event in candidate_events
+        },
+        key=lambda item: (item[0] is None, item[0] or 0, item[1]),
+    )
+    candidate_subsystems = sorted(
+        {str(event.get("subsystem", "")) for event in candidate_events}
+    )
+    collection = collection or {}
+    collection_predicate = str(collection.get("predicate", ""))
+    collection_exit_ok = collection.get("exitCode") == 0
+    collection_not_truncated = collection.get("retainedTailTruncated") is False
+    exact_server_coverage = bool(
+        server_pid and f"processID == {server_pid}" in collection_predicate
+    )
+    exact_client_peer_coverage = bool(
+        client_pid and f".peer[{client_pid}]" in collection_predicate
+    )
+    launch_agent_coverage = 'process == "imklaunchagent"' in collection_predicate
+    predicate_loss_not_supported = bool(
+        collection_exit_ok
+        and collection_not_truncated
+        and exact_server_coverage
+        and exact_client_peer_coverage
+        and launch_agent_coverage
+    )
     relevant_terms = (
         "launchinputmethod",
         "imkxpcendpoint",
@@ -1350,11 +1430,21 @@ def parse_endpoint_evidence(
         "get bundle identifier",
         "inputmethodconnectionname",
     )
-    relevant = [
-        retained(event)
+    relevant_events = [
+        event
         for event in events
         if any(term in lower_message(event) for term in relevant_terms)
     ]
+    relevant_line_numbers = {
+        event.get("_lineNumber") for event in relevant_events
+    }
+    relevant_events.extend(
+        event
+        for event in candidate_events
+        if event.get("_lineNumber") not in relevant_line_numbers
+    )
+    relevant_events.sort(key=lambda event: event.get("_lineNumber", 0))
+    relevant = [retained(event) for event in relevant_events]
     return {
         "diagnosticOnly": True,
         "serverPID": server_pid,
@@ -1384,6 +1474,38 @@ def parse_endpoint_evidence(
             "endpointInvalidEventCount": len(endpoint_invalid),
         },
         "serverInitializationEventCount": len(server_initialization),
+        "candidateInventory": {
+            "processes": [
+                {"processID": process_id, "processImagePath": process_path}
+                for process_id, process_path in candidate_processes
+            ],
+            "subsystems": candidate_subsystems,
+            "exactServerXPCConnectionNames": sorted(connection_names)[:100],
+            "exactServerXPCConnectionNameLimit": 100,
+            "registrationServiceEventsOwnedByOtherProcesses": [
+                retained(event)
+                for event in other_process_registration_services[:20]
+            ],
+            "anonymousExactClientPeersOwnedByOtherProcesses": [
+                retained(event) for event in anonymous_other_process_peers[:20]
+            ],
+            "alternativeProcessEventLimit": 20,
+        },
+        "collectionAssessment": {
+            "exitCode": collection.get("exitCode"),
+            "windowStart": collection.get("windowStart"),
+            "windowEnd": collection.get("windowEnd"),
+            "matchedLineCount": collection.get("matchedLineCount"),
+            "retainedLineCount": collection.get("retainedLineCount"),
+            "retainedTailLimit": collection.get("retainedTailLimit"),
+            "retainedTailTruncated": collection.get("retainedTailTruncated"),
+            "predicate": collection.get("predicate"),
+            "predicateCoverage": {
+                "allExactServerRecords": exact_server_coverage,
+                "exactClientPeerMarkerAcrossProcesses": exact_client_peer_coverage,
+                "allLaunchAgentRecords": launch_agent_coverage,
+            },
+        },
         "internalIMKEndpointObserved": internal_endpoint_observed,
         "reliableDiagnosticCollectorCandidate": bool(
             serving_channel_observed and server_pid and client_pid
@@ -1402,15 +1524,37 @@ def parse_endpoint_evidence(
         "explanationTests": {
             "endpointWasNeverCreated": {
                 "result": (
-                    "disconfirmed" if serving_channel_observed else "not-disconfirmed"
+                    "disconfirmed-for-exact-server"
+                    if internal_endpoint_observed
+                    else (
+                        "disconfirmed-only-outside-exact-server"
+                        if anonymous_other_process_peers
+                        else "not-disconfirmed"
+                    )
                 ),
-                "disconfirmingEvidence": "an anonymous XPC peer event owned by the exact server PID and naming the exact client PID, followed by exact-server IMK activation",
+                "disconfirmingEvidence": "an endpoint registration or anonymous exact-client XPC peer correlated to a process ID, with exact-server IMK activation required for the serving-channel classification",
             },
             "endpointBelongedToAnotherProcess": {
                 "result": (
-                    "disconfirmed" if serving_channel_observed else "not-disconfirmed"
+                    "also-observed"
+                    if internal_endpoint_observed and anonymous_other_process_peers
+                    else (
+                        "disconfirmed"
+                        if internal_endpoint_observed
+                        else (
+                            "supported"
+                            if anonymous_other_process_peers
+                            else "not-disconfirmed"
+                        )
+                    )
                 ),
-                "disconfirmingEvidence": "the serving peer event processID matches the independently path-verified automatic Unicorn PID",
+                "disconfirmingEvidence": "the serving peer event processID matches the independently path-verified automatic input-method PID",
+                "otherRegistrationServiceEventCount": len(
+                    other_process_registration_services
+                ),
+                "otherAnonymousExactClientPeerEventCount": len(
+                    anonymous_other_process_peers
+                ),
             },
             "differentServiceOrName": {
                 "result": (
@@ -1421,14 +1565,49 @@ def parse_endpoint_evidence(
                     )
                 ),
                 "disconfirmingEvidence": "the Squirrel-style exact-server com.apple.inputmethodkit.setxpcendpoint service, launch-agent peer, and receipt chain",
+                "exactServerXPCConnectionNames": sorted(connection_names)[:100],
             },
-            "timingWindowOrCollectionPredicateLoss": {
+            "differentSubsystem": {
                 "result": (
-                    "not-supported-in-this-window"
+                    "not-supported"
+                    if serving_channel_observed and predicate_loss_not_supported
+                    else "not-disconfirmed"
+                ),
+                "observedCandidateSubsystems": candidate_subsystems,
+                "evidence": "candidate recognition uses exact process IDs and endpoint messages across subsystem values; the serving peer is an exact-server com.apple.xpc record and IMK activation has an empty subsystem",
+            },
+            "differentTopology": {
+                "result": (
+                    "supported"
+                    if serving_channel_observed and not registration_observed
+                    else (
+                        "disconfirmed" if registration_observed else "not-disconfirmed"
+                    )
+                ),
+                "observedTopology": topology,
+                "squirrelReferenceTopology": "launchagent-registration-and-anonymous-serving-channel",
+            },
+            "timingWindow": {
+                "result": (
+                    "not-supported-within-retained-window"
                     if server_initialization and serving_channel_observed
                     else "not-disconfirmed"
                 ),
-                "disconfirmingEvidence": "a focused query spanning exact-server initialization through exact-client activation that retains initialization, request, serving-peer, and activation records but no standard registration chain, repeated on a fresh runner",
+                "disconfirmingEvidence": "the bounded query spans exact-server initialization through exact-client serving and activation",
+                "residualUncertainty": "unified-log records outside the bounded query window were not collected",
+            },
+            "collectionPredicate": {
+                "result": (
+                    "not-supported" if predicate_loss_not_supported else "not-disconfirmed"
+                ),
+                "disconfirmingEvidence": "the successful query retained all exact-server records, all launch-agent records, and the exact-client peer marker across owning processes without tail truncation",
+                "assessment": {
+                    "querySucceeded": collection_exit_ok,
+                    "retainedTailNotTruncated": collection_not_truncated,
+                    "allExactServerRecords": exact_server_coverage,
+                    "exactClientPeerMarkerAcrossProcesses": exact_client_peer_coverage,
+                    "allLaunchAgentRecords": launch_agent_coverage,
+                },
             },
             "priorParserOnlyRecognizedSquirrelRegistration": {
                 "result": (
@@ -1597,25 +1776,35 @@ def automatic_activation(
         ]
         observed_pids = sorted(set().union(*all_pid_sets)) if all_pid_sets else []
         exact_pid = observed_pids[0] if len(observed_pids) == 1 else None
+        endpoint_predicate_clauses = [
+            'process == "imklaunchagent"',
+            'eventMessage CONTAINS[c] "IMKXPCEndpoint"',
+            'eventMessage CONTAINS[c] "setxpcendpoint"',
+            'eventMessage CONTAINS[c] "getxpcendpoint"',
+            'eventMessage CONTAINS[c] "InputMethodConnectionName"',
+        ]
+        if exact_pid is not None:
+            endpoint_predicate_clauses.append(f"processID == {exact_pid}")
+        if exact_client_pid is not None:
+            endpoint_predicate_clauses.extend(
+                [
+                    f'eventMessage CONTAINS[c] ".peer[{exact_client_pid}]"',
+                    f'eventMessage CONTAINS[c] "pid_t: {exact_client_pid}"',
+                ]
+            )
         endpoint_logs = capture_log_window(
             evidence,
             "automatic-activation-endpoint-log",
             result["startedAt"],
             completed_at,
-            1200,
-            (
-                '(process == "imklaunchagent" '
-                'OR (process == "unicorn" AND subsystem == "com.apple.xpc") '
-                'OR (process == "unicorn" AND eventMessage CONTAINS[c] "Server") '
-                'OR (process == "unicorn" AND eventMessage == "Get bundle identifier") '
-                'OR eventMessage CONTAINS[c] "IMKXPCEndpoint" '
-                'OR eventMessage CONTAINS[c] "setxpcendpoint" '
-                'OR eventMessage CONTAINS[c] "getxpcendpoint" '
-                'OR eventMessage CONTAINS[c] "InputMethodConnectionName")'
-            ),
+            2400,
+            f"({' OR '.join(endpoint_predicate_clauses)})",
         )
         endpoint = parse_endpoint_evidence(
-            evidence / endpoint_logs["path"], exact_pid, exact_client_pid
+            evidence / endpoint_logs["path"],
+            exact_pid,
+            exact_client_pid,
+            endpoint_logs,
         )
         build_info = load_json(evidence / "build-identity.json", {}).get(
             "infoPlist", {}
