@@ -1,0 +1,2367 @@
+#!/usr/bin/env python3
+"""Bounded hosted automatic-activation experiment for the exact Unicorn build."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import grp
+import hashlib
+import importlib.util
+import json
+import os
+import pathlib
+import plistlib
+import pwd
+import re
+import shutil
+import stat
+import subprocess
+import time
+from typing import Any
+
+SHARED_PATH = pathlib.Path(__file__).parents[1] / "HostedIMKProbe" / "probe.py"
+SHARED_SPEC = importlib.util.spec_from_file_location("hosted_imk_shared", SHARED_PATH)
+if SHARED_SPEC is None or SHARED_SPEC.loader is None:
+    raise RuntimeError(f"Unable to import shared probe support from {SHARED_PATH}")
+shared = importlib.util.module_from_spec(SHARED_SPEC)
+SHARED_SPEC.loader.exec_module(shared)
+
+BUNDLE_ID = "Vic-Shih.inputmethod.unicorn"
+DECLARED_MODE_ID = "Vic-Shih.inputmethod.unicorn"
+TARGET_SOURCE_ID = "Vic-Shih.inputmethod.unicorn.unicorn"
+EXECUTABLE_NAME = "unicorn"
+DVORAK_ID = "com.apple.keylayout.Dvorak"
+US_ID = "com.apple.keylayout.US"
+LAYOUT_TYPE = "TISTypeKeyboardLayout"
+EXPECTED_TEXT = "←"
+EXPECTED_SCALARS = ["U+2190"]
+COMPOSITION_INPUT = "\\l"
+COMPOSITION_TRIE_PATH = ["l", ">>"]
+AUTOMATIC_DEADLINE_SECONDS = 15
+SUPPORTED_INSTALLER_EXPERIMENT = "unicorn-supported-installer"
+POST_APPROVAL_ENABLE_EXPERIMENT = "unicorn-post-approval-mode-enable"
+SEMANTIC_ADD_EXPERIMENT = "unicorn-semantic-input-source-add"
+ALLOWED_EXPERIMENTS = {
+    SUPPORTED_INSTALLER_EXPERIMENT,
+    POST_APPROVAL_ENABLE_EXPERIMENT,
+    SEMANTIC_ADD_EXPERIMENT,
+}
+
+
+def load_json(path: pathlib.Path, default: Any = None) -> Any:
+    return shared.load_json(path, default)
+
+
+def write_json(path: pathlib.Path, value: Any) -> None:
+    shared.atomic_json(path, value)
+
+
+def github_run_url() -> str | None:
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if repository and run_id:
+        return f"https://github.com/{repository}/actions/runs/{run_id}"
+    return None
+
+
+def sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def composition_mapping(keymap_path: pathlib.Path) -> dict[str, Any]:
+    keymap = load_json(keymap_path, {})
+    node: Any = keymap
+    for component in COMPOSITION_TRIE_PATH:
+        node = node.get(component) if isinstance(node, dict) else None
+    candidates = node if isinstance(node, list) else []
+    first_candidate = candidates[0] if candidates else None
+    return {
+        "keymapPath": str(keymap_path),
+        "keymapSHA256": sha256(keymap_path),
+        "inputSequence": COMPOSITION_INPUT,
+        "activationPrefix": "\\",
+        "trieLookupCharacters": ["l"],
+        "keymapJSONPath": COMPOSITION_TRIE_PATH,
+        "candidates": candidates,
+        "firstCandidate": first_candidate,
+        "expectedCommittedText": EXPECTED_TEXT,
+        "expectedTextScalars": EXPECTED_SCALARS,
+        "assertionMatchesAuthoritativeFirstCandidate": first_candidate == EXPECTED_TEXT,
+    }
+
+
+def initialize(
+    evidence: pathlib.Path, installed_app: pathlib.Path, experiment: str
+) -> None:
+    if experiment not in ALLOWED_EXPERIMENTS:
+        raise ValueError(f"Unsupported Unicorn experiment: {experiment}")
+    evidence.mkdir(parents=True, exist_ok=True)
+    home = pathlib.Path.home()
+    tracked_paths = [
+        installed_app,
+        home / "Library" / "Containers" / BUNDLE_ID,
+        home / "Library" / "Preferences" / f"{BUNDLE_ID}.plist",
+        home / "Library" / "Caches" / BUNDLE_ID,
+        home / "Library" / "Application Support" / "Unicorn",
+    ]
+    write_json(
+        evidence / "installation-state.json",
+        {
+            "schemaVersion": 1,
+            "createdAt": shared.timestamp(),
+            "experiment": experiment,
+            "selectionStarted": False,
+            "initialCurrentSourceID": None,
+            "initialCurrentSourceType": None,
+            "initialUnicornSources": [],
+            "automaticProcess": None,
+            "trackedPaths": [
+                {"path": str(path), "existedBefore": path.exists()}
+                for path in tracked_paths
+            ],
+        },
+    )
+    write_json(
+        evidence / "summary.json",
+        {
+            "schemaVersion": 1,
+            "probe": "github-hosted-arm64-unicorn-automatic-activation",
+            "experiment": experiment,
+            "status": "running",
+            "startedAt": shared.timestamp(),
+            "actionsRunURL": github_run_url(),
+            "exactRevision": os.environ.get("GITHUB_SHA"),
+            "intendedSourceIdentity": {
+                "bundleID": BUNDLE_ID,
+                "parentSourceID": BUNDLE_ID,
+                "declaredModeID": DECLARED_MODE_ID,
+                "selectableSourceID": TARGET_SOURCE_ID,
+            },
+            "assertions": {
+                "composition": {
+                    "inputSequence": COMPOSITION_INPUT,
+                    "physicalKeys": ["backslash", "l", "enter"],
+                    "keyCodes": [42, 37, 36],
+                    "expectedCommittedText": EXPECTED_TEXT,
+                    "expectedTextScalars": EXPECTED_SCALARS,
+                    "markedTextMustAppear": True,
+                    "compositionMustEnd": True,
+                },
+                "automaticActivation": {
+                    "directExecutableLaunchPerformed": False,
+                    "exactProcessMustStart": True,
+                    "exactExecutableIdentityMustMatch": True,
+                    "processMustRemainAliveThroughComposition": True,
+                    "endpointObservationIsDiagnosticOnly": True,
+                    "correlatedIMKEndpointMustAppear": False,
+                    "exactSourceMustBeCurrent": True,
+                },
+            },
+            "treatment": {
+                "name": (
+                    "checked-in supported Unicorn installer plus semantic System Settings Input Sources Add"
+                    if experiment == SEMANTIC_ADD_EXPERIMENT
+                    else (
+                        "checked-in supported Unicorn installer plus one repeated exact target enable after approval"
+                        if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                        else "checked-in supported Unicorn installer plus public TIS convergence"
+                    )
+                ),
+                "changedCondition": (
+                    "use Unicorn's documented end-user System Settings Input Sources Add path after approval"
+                    if experiment == SEMANTIC_ADD_EXPERIMENT
+                    else (
+                        "refresh exact live sources after Allow and repeat only public target-mode enablement"
+                        if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                        else "none: first equivalent-treatment arm"
+                    )
+                ),
+                "installerPath": "install.sh",
+                "installationLocation": str(installed_app),
+                "registration": [
+                    "the installer's exact-app LaunchServices registration",
+                    "public TISRegisterInputSource for the exact installed app",
+                ],
+                "enablement": "public TISEnableInputSource for exact enumerated parent and target sources",
+                "approval": "exact semantic System Settings Allow action if required",
+                "selection": "public TISSelectInputSource for exact source Vic-Shih.inputmethod.unicorn.unicorn with declared mode Vic-Shih.inputmethod.unicorn",
+                "activation": "focused AppKit client plus physical backslash-l-enter input",
+                "counterfactualBasis": (
+                    {
+                        "priorRunURL": "https://github.com/vic0103520/unicorn-macOS/actions/runs/33176545818",
+                        "priorEarliestDivergence": "the exact target mode remained disabled after a second post-approval public enable request",
+                        "singleChangedCondition": "replace only the ineffective repeated target-mode API request with Unicorn's documented semantic Input Sources Add action",
+                    }
+                    if experiment == SEMANTIC_ADD_EXPERIMENT
+                    else (
+                        {
+                            "priorRunURL": "https://github.com/vic0103520/unicorn-macOS/actions/runs/33175943523",
+                            "priorEarliestDivergence": "after Allow enabled the exact parent, the exact target mode remained disabled and TISSelectInputSource returned -50",
+                            "singleChangedCondition": "repeat public TISEnableInputSource for the refreshed exact target after approval",
+                        }
+                        if experiment == POST_APPROVAL_ENABLE_EXPERIMENT
+                        else None
+                    )
+                ),
+            },
+            "boundedScope": {
+                "runnerLabel": "macos-15",
+                "expectedArchitecture": "arm64",
+                "sameLoggedInAquaUserRequired": True,
+                "directExecutableLaunchPerformed": False,
+                "privateDatabaseEdited": False,
+                "securityWeakened": False,
+                "broadServiceRestarted": False,
+                "persistentInfrastructureUsed": False,
+                "tartUsed": False,
+                "screenshotsDiagnosticOnly": True,
+                "passFailUsesOCRPixelsOrCoordinates": False,
+            },
+            "squirrelObservedSufficientTreatment": {
+                "runURL": "https://github.com/vic0103520/unicorn-macOS/actions/runs/33147470444",
+                "observedBoundary": "official package installation into /Library/Input Methods followed by exact registration, parent and mode enablement, semantic Allow, exact mode selection, and AppKit client input automatically started Squirrel and completed deterministic composition",
+                "causalLimit": "Squirrel success proves that combined treatment sufficient for Squirrel. It does not identify which installer side effect is individually necessary for Unicorn.",
+            },
+            "github": {
+                key: os.environ.get(key)
+                for key in (
+                    "GITHUB_ACTIONS",
+                    "GITHUB_REPOSITORY",
+                    "GITHUB_RUN_ID",
+                    "GITHUB_RUN_ATTEMPT",
+                    "GITHUB_SHA",
+                    "GITHUB_REF",
+                    "RUNNER_NAME",
+                    "RUNNER_ARCH",
+                    "RUNNER_OS",
+                    "ImageOS",
+                    "ImageVersion",
+                )
+            },
+        },
+    )
+
+
+def source_snapshot(
+    helper: pathlib.Path, evidence: pathlib.Path, filename: str, label: str
+) -> dict[str, Any]:
+    path = evidence / filename
+    command = shared.run_command(
+        [str(helper), "sources", label, str(path)], timeout=30
+    )
+    return {"command": command, "data": load_json(path, {})}
+
+
+def current_id(snapshot: dict[str, Any]) -> str | None:
+    data = snapshot.get("data", snapshot)
+    return data.get("current", {}).get("inputSourceID")
+
+
+def current_bundle(snapshot: dict[str, Any]) -> str | None:
+    data = snapshot.get("data", snapshot)
+    return data.get("current", {}).get("bundleID")
+
+
+def preflight(evidence: pathlib.Path, helper: pathlib.Path) -> None:
+    uid = os.getuid()
+    commands = {
+        "architecture": ["uname", "-m"],
+        "systemVersion": ["sw_vers"],
+        "identity": ["id"],
+        "processUser": ["id", "-un"],
+        "loggedInUsers": ["who"],
+        "consoleUser": ["stat", "-f", "%Su", "/dev/console"],
+        "windowServer": ["pgrep", "-alf", "WindowServer"],
+        "aquaLaunchDomain": ["launchctl", "print", f"gui/{uid}"],
+        "xcodeVersion": ["xcodebuild", "-version"],
+        "developerSecurity": ["DevToolsSecurity", "-status"],
+        "automationModeBefore": ["automationmodetool"],
+        "unicornProcessBefore": ["pgrep", "-x", EXECUTABLE_NAME],
+    }
+    results = {name: shared.run_command(command) for name, command in commands.items()}
+    results["automationModeEnable"] = shared.run_command(
+        [
+            "sudo",
+            "-n",
+            "automationmodetool",
+            "enable-automationmode-without-authentication",
+        ],
+        timeout=30,
+    )
+    results["automationModeAfter"] = shared.run_command(["automationmodetool"])
+    results["nativeSessionProbe"] = shared.run_command(
+        [str(helper), "session", str(evidence / "aqua-session.json")]
+    )
+    initial = source_snapshot(
+        helper, evidence, "input-sources-initial.json", "fresh-runner-initial"
+    )
+    results["initialInputSources"] = initial["command"]
+    write_json(evidence / "environment.json", results)
+
+    aqua = load_json(evidence / "aqua-session.json", {})
+    architecture = results["architecture"].get("stdout", "").strip()
+    process_user = results["processUser"].get("stdout", "").strip()
+    console_user = results["consoleUser"].get("stdout", "").strip()
+    initial_sources = [
+        source
+        for source in initial["data"].get("sources", [])
+        if source.get("bundleID") == BUNDLE_ID
+    ]
+    state_path = evidence / "installation-state.json"
+    state = load_json(state_path, {})
+    current = initial["data"].get("current", {})
+    state.update(
+        {
+            "initialCurrentSourceID": current.get("inputSourceID"),
+            "initialCurrentSourceType": current.get("type"),
+            "initialUnicornSources": initial_sources,
+            "dvorakInitiallyEnabled": next(
+                (
+                    source.get("enabled") is True
+                    for source in initial["data"].get("sources", [])
+                    if source.get("inputSourceID") == DVORAK_ID
+                ),
+                False,
+            ),
+        }
+    )
+    write_json(state_path, state)
+    checks = {
+        "architectureIsArm64": architecture == "arm64",
+        "runnerArchitectureIsARM64": os.environ.get("RUNNER_ARCH") == "ARM64",
+        "sameProcessAndConsoleUser": process_user == console_user == aqua.get("processUser") == aqua.get("consoleUser"),
+        "uidMatchesAquaSession": aqua.get("uid") == uid,
+        "aquaSessionPresent": aqua.get("hasAquaSessionDictionary") is True,
+        "screenPresent": aqua.get("screenCount", 0) > 0,
+        "accessibilityTrusted": aqua.get("accessibilityTrusted") is True,
+        "cgEventPostingAllowed": aqua.get("cgEventPostPreflight") is True,
+        "guiBootstrapDomainPresent": results["aquaLaunchDomain"].get("exitCode") == 0,
+        "windowServerPresent": results["windowServer"].get("exitCode") == 0,
+        "noPreexistingUnicornProcess": results["unicornProcessBefore"].get("exitCode") == 1,
+        "noPreexistingUnicornSources": not initial_sources,
+        "noTrackedPathPreexisted": not any(
+            item.get("existedBefore") for item in state.get("trackedPaths", [])
+        ),
+    }
+    write_json(evidence / "preflight-checks.json", checks)
+    summary = load_json(evidence / "summary.json", {})
+    summary["environment"] = {
+        "architecture": architecture,
+        "runnerArchitecture": os.environ.get("RUNNER_ARCH"),
+        "uid": uid,
+        "processUser": process_user,
+        "consoleUser": console_user,
+        "aquaSession": aqua,
+        "checks": checks,
+    }
+    write_json(evidence / "summary.json", summary)
+    if not all(checks.values()):
+        raise RuntimeError(f"Fresh hosted Aqua preflight failed: {checks}")
+
+
+def plist_value(app: pathlib.Path) -> dict[str, Any]:
+    with (app / "Contents" / "Info.plist").open("rb") as handle:
+        return plistlib.load(handle)
+
+
+def record_build(
+    evidence: pathlib.Path, app: pathlib.Path, client_app: pathlib.Path
+) -> None:
+    executable = app / "Contents" / "MacOS" / EXECUTABLE_NAME
+    info = plist_value(app)
+    head = shared.run_command(["git", "rev-parse", "HEAD"])
+    head_sha = head.get("stdout", "").strip()
+    commands = {
+        "gitHead": head,
+        "lipo": shared.run_command(["lipo", "-info", str(executable)]),
+        "codesignVerify": shared.run_command(
+            ["codesign", "--verify", "--deep", "--strict", "--verbose=4", str(app)]
+        ),
+        "codesignMetadata": shared.run_command(["codesign", "-dvvv", str(app)]),
+        "codesignEntitlements": shared.run_command(
+            ["codesign", "-d", "--entitlements", ":-", str(app)]
+        ),
+        "file": shared.run_command(["file", str(executable)]),
+    }
+    mode_list = info.get("ComponentInputModeDict", {}).get("tsInputModeListKey", {})
+    mapping = composition_mapping(app / "Contents" / "Resources" / "keymap.json")
+    value = {
+        "timestamp": shared.timestamp(),
+        "githubSHA": os.environ.get("GITHUB_SHA"),
+        "gitHead": head_sha,
+        "exactRevisionMatchesCheckout": head_sha == os.environ.get("GITHUB_SHA"),
+        "appPath": str(app),
+        "executablePath": str(executable),
+        "executableSHA256": sha256(executable),
+        "keymapSHA256": sha256(app / "Contents" / "Resources" / "keymap.json"),
+        "compositionMapping": mapping,
+        "clientExecutableSHA256": sha256(
+            client_app / "Contents" / "MacOS" / "HostedIMKProbeClient"
+        ),
+        "infoPlist": info,
+        "bundleID": info.get("CFBundleIdentifier"),
+        "declaredSourceIDs": sorted(mode_list),
+        "commands": commands,
+    }
+    value["success"] = (
+        value["exactRevisionMatchesCheckout"]
+        and value["bundleID"] == BUNDLE_ID
+        and value["declaredSourceIDs"] == [DECLARED_MODE_ID]
+        and mapping["assertionMatchesAuthoritativeFirstCandidate"]
+        and commands["lipo"].get("exitCode") == 0
+        and "arm64" in commands["lipo"].get("stdout", "")
+        and commands["codesignVerify"].get("exitCode") == 0
+    )
+    write_json(evidence / "build-identity.json", value)
+    if not value["success"]:
+        raise RuntimeError("Exact Unicorn build identity verification failed")
+
+
+def filesystem_identity(path: pathlib.Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"path": str(path), "exists": False}
+    metadata = path.stat()
+    return {
+        "path": str(path),
+        "resolvedPath": str(path.resolve()),
+        "exists": True,
+        "isDirectory": path.is_dir(),
+        "uid": metadata.st_uid,
+        "user": pwd.getpwuid(metadata.st_uid).pw_name,
+        "gid": metadata.st_gid,
+        "group": grp.getgrgid(metadata.st_gid).gr_name,
+        "mode": stat.filemode(metadata.st_mode),
+        "modeOctal": oct(stat.S_IMODE(metadata.st_mode)),
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "parent": str(path.parent),
+    }
+
+
+def launchservices_excerpt(app: pathlib.Path) -> dict[str, Any]:
+    command = [
+        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+        "-dump",
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    lines = completed.stdout.splitlines()
+    indexes = [
+        index
+        for index, line in enumerate(lines)
+        if BUNDLE_ID.lower() in line.lower() or str(app).lower() in line.lower()
+    ]
+    selected: list[str] = []
+    seen: set[int] = set()
+    for index in indexes:
+        for candidate in range(max(0, index - 12), min(len(lines), index + 20)):
+            if candidate not in seen:
+                seen.add(candidate)
+                selected.append(lines[candidate])
+    return {
+        "command": command,
+        "exitCode": completed.returncode,
+        "matchingLineIndexes": indexes[:50],
+        "matchCount": len(indexes),
+        "retainedContextLineLimit": 500,
+        "retainedContext": selected[:500],
+        "stderr": shared.bounded(completed.stderr, 16_384),
+    }
+
+
+def capture_log_window(
+    evidence: pathlib.Path,
+    name: str,
+    started_at: str | None,
+    completed_at: str | None,
+    limit: int = 1200,
+    predicate: str | None = None,
+) -> dict[str, Any]:
+    def parse(value: str | None) -> dt.datetime:
+        if not value:
+            return dt.datetime.now(dt.timezone.utc)
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    start = parse(started_at) - dt.timedelta(seconds=2)
+    end = max(parse(completed_at), dt.datetime.now(dt.timezone.utc)) + dt.timedelta(seconds=1)
+    if predicate is None:
+        predicate = (
+            '(subsystem CONTAINS[c] "TextInput" '
+            'OR subsystem CONTAINS[c] "LaunchServices" '
+            'OR subsystem CONTAINS[c] "RunningBoard" '
+            'OR subsystem CONTAINS[c] "InputMethodKit" '
+            'OR category CONTAINS[c] "TextInput" '
+            'OR process == "imklaunchagent" '
+            'OR process == "unicorn" '
+            'OR process == "lsd" '
+            'OR process == "launchservicesd" '
+            'OR process == "runningboardd" '
+            'OR process == "amfid" '
+            'OR process == "taskgated" '
+            'OR process == "syspolicyd" '
+            'OR process == "ReportCrash" '
+            'OR eventMessage CONTAINS[c] "Vic-Shih.inputmethod.unicorn" '
+            'OR eventMessage CONTAINS[c] "LaunchInputMethod" '
+            'OR eventMessage CONTAINS[c] "IMKXPCEndpoint" '
+            'OR eventMessage CONTAINS[c] "dyld")'
+        )
+    command = [
+        "/usr/bin/log",
+        "show",
+        "--start",
+        start.astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
+        "--end",
+        end.astimezone().strftime("%Y-%m-%d %H:%M:%S%z"),
+        "--style",
+        "ndjson",
+        "--info",
+        "--debug",
+        "--predicate",
+        predicate,
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=45, check=False)
+    matched_lines = completed.stdout.splitlines()
+    lines = matched_lines[-limit:]
+    path = evidence / f"{name}.jsonl"
+    path.write_text("\n".join(lines) + ("\n" if lines else ""))
+    result = {
+        "command": command,
+        "exitCode": completed.returncode,
+        "windowStart": start.isoformat(),
+        "windowEnd": end.isoformat(),
+        "matchedLineCount": len(matched_lines),
+        "retainedLineCount": len(lines),
+        "retainedTailLimit": limit,
+        "retainedTailTruncated": len(matched_lines) > limit,
+        "predicate": predicate,
+        "path": path.name,
+        "stderr": shared.bounded(completed.stderr, 16_384),
+    }
+    write_json(evidence / f"{name}-metadata.json", result)
+    return result
+
+
+def record_installation(
+    evidence: pathlib.Path,
+    app: pathlib.Path,
+    helper: pathlib.Path,
+    stage: str,
+) -> None:
+    executable = app / "Contents" / "MacOS" / EXECUTABLE_NAME
+    value: dict[str, Any] = {
+        "timestamp": shared.timestamp(),
+        "stage": stage,
+        "app": filesystem_identity(app),
+        "appParent": filesystem_identity(app.parent),
+        "executable": filesystem_identity(executable),
+        "process": process_snapshot(app),
+        "launchServices": launchservices_excerpt(app),
+        "xattrs": shared.run_command(["xattr", "-lr", str(app)]),
+        "codesignVerify": shared.run_command(
+            ["codesign", "--verify", "--deep", "--strict", "--verbose=4", str(app)]
+        ),
+        "sourceSnapshot": source_snapshot(
+            helper,
+            evidence,
+            f"input-sources-installation-{stage}.json",
+            f"installation-{stage}",
+        ),
+    }
+    if stage == "after":
+        before = load_json(evidence / "installation-before.json", {})
+        value["installerObservedEffects"] = {
+            "appCreated": before.get("app", {}).get("exists") is False
+            and value["app"].get("exists") is True,
+            "installedInConventionalUserInputMethodsDirectory": app.parent
+            == pathlib.Path.home() / "Library" / "Input Methods",
+            "launchServicesExactAppMatchObserved": value["launchServices"].get("matchCount", 0) > 0,
+            "processRemainedAbsent": value["process"].get("processCount") == 0,
+            "sourceCountBefore": before.get("sourceSnapshot", {}).get("data", {}).get("enumeration", {}).get("unicornSourceCount", 0),
+            "sourceCountAfter": value["sourceSnapshot"].get("data", {}).get("enumeration", {}).get("unicornSourceCount", 0),
+            "quarantinePresentAfter": "com.apple.quarantine" in value["xattrs"].get("stdout", ""),
+        }
+        value["installerLogWindow"] = capture_log_window(
+            evidence,
+            "installer-system-log",
+            before.get("timestamp"),
+            value["timestamp"],
+        )
+    write_json(evidence / f"installation-{stage}.json", value)
+
+
+def native_transition(
+    helper: pathlib.Path,
+    evidence: pathlib.Path,
+    name: str,
+    arguments: list[str],
+) -> dict[str, Any]:
+    path = evidence / f"transition-{name}.json"
+    command = shared.run_command([str(helper), *arguments, str(path)], timeout=45)
+    data = load_json(path, {})
+    logs = capture_log_window(
+        evidence,
+        f"transition-{name}-system-log",
+        data.get("startedAt"),
+        data.get("completedAt"),
+        800,
+    )
+    return {"command": command, "data": data, "logs": logs}
+
+
+def executable_process_snapshot(
+    bundle_id: str,
+    executable_name: str,
+    expected: pathlib.Path,
+    lookup_command: list[str] | None = None,
+) -> dict[str, Any]:
+    lookup = shared.run_command(
+        lookup_command or ["pgrep", "-x", executable_name], timeout=10
+    )
+    pids = [line for line in lookup.get("stdout", "").splitlines() if line.isdigit()]
+    processes: list[dict[str, Any]] = []
+    for pid in pids:
+        details = shared.run_command(
+            [
+                "ps",
+                "-p",
+                pid,
+                "-o",
+                "pid=,ppid=,uid=,user=,state=,etime=,lstart=,comm=,args=",
+            ],
+            timeout=10,
+        )
+        text_mapping = shared.run_command(
+            ["lsof", "-a", "-p", pid, "-d", "txt", "-Fn"], timeout=10
+        )
+        expected_text_record = f"n{expected}"
+        exact_path = (
+            expected_text_record in text_mapping.get("stdout", "").splitlines()
+            or str(expected) in details.get("stdout", "")
+        )
+        processes.append(
+            {
+                "pid": int(pid),
+                "expectedExecutablePath": str(expected),
+                "ps": details,
+                "textMapping": text_mapping,
+                "exactExecutablePathProven": exact_path,
+            }
+        )
+    return {
+        "timestamp": shared.timestamp(),
+        "bundleID": bundle_id,
+        "executableName": executable_name,
+        "expectedExecutablePath": str(expected),
+        "pids": [int(pid) for pid in pids],
+        "processCount": len(pids),
+        "processes": processes,
+        "allObservedProcessesHaveExactExecutablePath": bool(processes)
+        and all(item["exactExecutablePathProven"] for item in processes),
+        "pgrep": lookup,
+    }
+
+
+def process_snapshot(installed_app: pathlib.Path) -> dict[str, Any]:
+    return executable_process_snapshot(
+        BUNDLE_ID,
+        EXECUTABLE_NAME,
+        installed_app / "Contents" / "MacOS" / EXECUTABLE_NAME,
+    )
+
+
+def client_process_snapshot(client_app: pathlib.Path) -> dict[str, Any]:
+    expected = client_app / "Contents" / "MacOS" / "HostedIMKProbeClient"
+    return executable_process_snapshot(
+        "dev.unicorn.hosted-imk-probe.client",
+        "HostedIMKProbeClient",
+        expected,
+        ["pgrep", "-f", "-x", str(expected)],
+    )
+
+
+def start_appium(evidence: pathlib.Path) -> tuple[Any, Any, Any, dict[str, Any]]:
+    transcript = evidence / "webdriver-transcript.jsonl"
+    log_handle = (evidence / "appium.log").open("w")
+    driver = shared.WebDriver("http://127.0.0.1:4723", transcript)
+    process = subprocess.Popen(
+        ["appium", "--base-path", "/", "--log-no-colors", "--log-timestamp"],
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    server = {
+        "pid": process.pid,
+        "startedByExperiment": True,
+        "readiness": shared.wait_for_server(driver),
+    }
+    return driver, process, log_handle, server
+
+
+def stop_appium(process: Any, handle: Any, server: dict[str, Any]) -> None:
+    server["terminationTargetPID"] = process.pid
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+        server["forceTerminationRequired"] = True
+    server["exitCode"] = process.returncode
+    server["stoppedOnlyTrackedExperimentProcess"] = True
+    handle.close()
+
+
+def semantic_element(driver: Any, session_id: str, element_id: str) -> dict[str, Any]:
+    names = (
+        "identifier",
+        "label",
+        "title",
+        "value",
+        "enabled",
+        "hittable",
+        "selected",
+        "elementType",
+    )
+    value = {
+        name: shared.attribute(driver, session_id, element_id, name)
+        for name in names
+    }
+    value["elementId"] = element_id
+    return value
+
+
+def truthy(value: Any) -> bool:
+    return value is True or str(value).lower() == "true"
+
+
+def approve_if_required(
+    driver: Any, helper: pathlib.Path, evidence: pathlib.Path
+) -> dict[str, Any]:
+    before = source_snapshot(
+        helper,
+        evidence,
+        "input-sources-before-accessibility-allow.json",
+        "immediately-before-approval-decision",
+    )
+    prerequisites = before["data"].get("prerequisites", {})
+    required = prerequisites.get("allDocumentedSelectionPrerequisitesSatisfied") is not True
+    result: dict[str, Any] = {
+        "startedAt": shared.timestamp(),
+        "approvalRequiredByObservedSourceProperties": required,
+        "attempted": required,
+        "method": "exact semantic Accessibility Allow action through Appium Mac2/XCTest",
+        "screenshotsDiagnosticOnly": True,
+        "usesOCRPixelsOrCoordinates": False,
+        "sourceImmediatelyBeforeAllow": before,
+        "semanticAllowVerified": False,
+        "allowClicked": False,
+    }
+    session_id: str | None = None
+    if not required:
+        result["reason"] = "Every documented selection prerequisite was already true"
+    else:
+        try:
+            session_id, response = shared.create_bundle_session(
+                driver, "com.apple.systempreferences", {"appium:noReset": True}
+            )
+            result["session"] = {"created": True, "response": response}
+            result["accessibilitySourceBefore"] = shared.save_source(
+                driver, session_id, evidence / "system-settings-consent.xml"
+            )
+            result["diagnosticScreenshotBefore"] = shared.save_screenshot(
+                driver, session_id, evidence / "system-settings-consent-before.png"
+            )
+            allow = shared.find_element(
+                driver,
+                session_id,
+                [("accessibility id", "action-button-1")],
+                timeout=25,
+            )
+            semantic = semantic_element(driver, session_id, allow)
+            result["allowElement"] = semantic
+            exact = (
+                semantic.get("identifier") == "action-button-1"
+                and semantic.get("label") == "Allow"
+                and truthy(semantic.get("enabled"))
+                and truthy(semantic.get("hittable"))
+            )
+            result["semanticAllowVerified"] = exact
+            if not exact:
+                raise RuntimeError(f"Refusing non-matching consent control: {semantic}")
+            driver.request("POST", f"/session/{session_id}/element/{allow}/click", {})
+            result["allowClicked"] = True
+            result["allowClickedAt"] = shared.timestamp()
+            time.sleep(0.5)
+            result["diagnosticScreenshotAfter"] = shared.save_screenshot(
+                driver, session_id, evidence / "system-settings-consent-after.png"
+            )
+        except Exception as error:
+            result["error"] = {
+                "type": type(error).__name__,
+                "message": shared.bounded(str(error)),
+            }
+        finally:
+            if session_id:
+                try:
+                    driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                    result.setdefault("session", {})["deleted"] = True
+                except Exception as error:
+                    result.setdefault("session", {})["deleteError"] = shared.bounded(
+                        str(error)
+                    )
+    result["sourceImmediatelyAfterAllow"] = source_snapshot(
+        helper,
+        evidence,
+        "input-sources-after-accessibility-allow.json",
+        "immediately-after-approval-treatment",
+    )
+    result["completedAt"] = shared.timestamp()
+    result["logs"] = capture_log_window(
+        evidence,
+        "approval-system-log",
+        result["startedAt"],
+        result["completedAt"],
+        800,
+    )
+    write_json(evidence / "system-settings-approval.json", result)
+    return result
+
+
+def element_ids(
+    driver: Any, session_id: str, strategy: str, value: str
+) -> list[str]:
+    response = driver.request(
+        "POST",
+        f"/session/{session_id}/elements",
+        {"using": strategy, "value": value},
+    )
+    elements = response.get("value", [])
+    return [
+        element_id
+        for item in elements
+        if isinstance(item, dict)
+        for element_id in [item.get(shared.ELEMENT_KEY) or item.get("ELEMENT")]
+        if isinstance(element_id, str)
+    ]
+
+
+def exact_semantic_element(
+    driver: Any,
+    session_id: str,
+    locators: list[tuple[str, str]],
+    predicate: Any,
+    description: str,
+    timeout: int = 20,
+) -> tuple[str, dict[str, Any]]:
+    deadline = time.monotonic() + timeout
+    last_candidates: list[dict[str, Any]] = []
+    while time.monotonic() < deadline:
+        by_id: dict[str, dict[str, Any]] = {}
+        for strategy, value in locators:
+            try:
+                for element_id in element_ids(driver, session_id, strategy, value):
+                    by_id.setdefault(
+                        element_id,
+                        semantic_element(driver, session_id, element_id),
+                    )
+            except Exception:
+                continue
+        last_candidates = list(by_id.values())
+        matching = [candidate for candidate in last_candidates if predicate(candidate)]
+        if len(matching) == 1:
+            return str(matching[0]["elementId"]), matching[0]
+        if len(matching) > 1:
+            raise RuntimeError(
+                f"Refusing ambiguous {description}; exact matches: {matching}"
+            )
+        time.sleep(0.5)
+    raise RuntimeError(
+        f"No unique exact semantic {description}; candidates: {last_candidates}"
+    )
+
+
+def semantic_input_source_add(
+    driver: Any, helper: pathlib.Path, evidence: pathlib.Path
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "startedAt": shared.timestamp(),
+        "attempted": True,
+        "method": "Unicorn's documented System Settings Keyboard Input Sources Edit, Add, Unicorn, Add path through exact Accessibility semantics",
+        "usesOCRPixelsOrCoordinates": False,
+        "screenshotsDiagnosticOnly": True,
+        "semanticInputSourceAddCompleted": False,
+    }
+    session_id: str | None = None
+    try:
+        session_id, response = shared.create_bundle_session(
+            driver, "com.apple.systempreferences", {"appium:noReset": True}
+        )
+        result["session"] = {"created": True, "response": response}
+        result["keyboardPageSource"] = shared.save_source(
+            driver, session_id, evidence / "system-settings-keyboard-page.xml"
+        )
+        edit_id, edit = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeStaticText[@value="Input Sources"]/following-sibling::XCUIElementTypeButton[@label="Edit…"]',
+                )
+            ],
+            lambda item: item.get("label") == "Edit…"
+            and truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "Input Sources Edit button",
+        )
+        result["inputSourcesEditElement"] = edit
+        driver.request("POST", f"/session/{session_id}/element/{edit_id}/click", {})
+        time.sleep(0.5)
+        result["inputSourcesEditorSource"] = shared.save_source(
+            driver, session_id, evidence / "system-settings-input-sources-editor.xml"
+        )
+        result["inputSourcesEditorScreenshot"] = shared.save_screenshot(
+            driver, session_id, evidence / "system-settings-input-sources-editor.png"
+        )
+        add_trigger_id, add_trigger = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeButton[@label="Add Input Source…" or @label="Add Input Source..." or @label="Add" or @label="+"]',
+                ),
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeButton[@title="Add Input Source…" or @title="Add Input Source..." or @title="Add" or @title="+"]',
+                ),
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeButton[@identifier="add"]',
+                ),
+            ],
+            lambda item: (
+                item.get("label")
+                in {"Add Input Source…", "Add Input Source...", "Add", "+"}
+                or item.get("title")
+                in {"Add Input Source…", "Add Input Source...", "Add", "+"}
+                or item.get("identifier") == "add"
+            )
+            and truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "Add Input Source trigger",
+        )
+        result["addInputSourceTrigger"] = add_trigger
+        driver.request(
+            "POST", f"/session/{session_id}/element/{add_trigger_id}/click", {}
+        )
+        time.sleep(0.5)
+        result["addChooserSource"] = shared.save_source(
+            driver, session_id, evidence / "system-settings-add-input-source.xml"
+        )
+        search_id, search = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeSearchField',
+                )
+            ],
+            lambda item: truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "Add Input Source search field",
+        )
+        result["searchField"] = search
+        driver.request("POST", f"/session/{session_id}/element/{search_id}/click", {})
+        driver.request(
+            "POST",
+            f"/session/{session_id}/element/{search_id}/value",
+            {"text": "Unicorn", "value": list("Unicorn")},
+        )
+        time.sleep(1)
+        result["searchResultsSource"] = shared.save_source(
+            driver, session_id, evidence / "system-settings-unicorn-search-results.xml"
+        )
+        unicorn_id, unicorn = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeStaticText[@value="Unicorn" or @label="Unicorn" or @title="Unicorn"]',
+                )
+            ],
+            lambda item: (
+                item.get("value") == "Unicorn"
+                or item.get("label") == "Unicorn"
+                or item.get("title") == "Unicorn"
+            )
+            and truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "Unicorn search result",
+        )
+        result["unicornSearchResult"] = unicorn
+        driver.request("POST", f"/session/{session_id}/element/{unicorn_id}/click", {})
+        time.sleep(0.5)
+        add_id, add = exact_semantic_element(
+            driver,
+            session_id,
+            [
+                (
+                    "xpath",
+                    '//XCUIElementTypeSheet//XCUIElementTypeButton[@label="Add" or @title="Add"]',
+                )
+            ],
+            lambda item: (
+                item.get("label") == "Add" or item.get("title") == "Add"
+            )
+            and truthy(item.get("enabled"))
+            and truthy(item.get("hittable")),
+            "final Add button",
+        )
+        result["finalAddElement"] = add
+        driver.request("POST", f"/session/{session_id}/element/{add_id}/click", {})
+        result["addClickedAt"] = shared.timestamp()
+        time.sleep(1)
+        result["afterAddScreenshot"] = shared.save_screenshot(
+            driver, session_id, evidence / "system-settings-after-unicorn-add.png"
+        )
+        result["semanticInputSourceAddCompleted"] = True
+    except Exception as error:
+        result["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
+        }
+    finally:
+        if session_id:
+            try:
+                driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                result.setdefault("session", {})["deleted"] = True
+            except Exception as error:
+                result.setdefault("session", {})["deleteError"] = shared.bounded(
+                    str(error)
+                )
+    result["sourceImmediatelyAfterSemanticAdd"] = source_snapshot(
+        helper,
+        evidence,
+        "input-sources-after-semantic-add.json",
+        "immediately-after-semantic-input-source-add",
+    )
+    result["completedAt"] = shared.timestamp()
+    result["logs"] = capture_log_window(
+        evidence,
+        "semantic-add-system-log",
+        result["startedAt"],
+        result["completedAt"],
+        1000,
+    )
+    write_json(evidence / "semantic-input-source-add.json", result)
+    return result
+
+
+def create_client_session(
+    driver: Any, client_app: pathlib.Path, evidence: pathlib.Path, name: str
+) -> tuple[str, pathlib.Path, pathlib.Path]:
+    current = evidence / f"client-{name}-current.json"
+    timeline = evidence / f"client-{name}-timeline.jsonl"
+    session_id, _ = shared.create_session(driver, client_app, current, timeline)
+    return session_id, current, timeline
+
+
+def timeline_entries(path: pathlib.Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    try:
+        for line in path.read_text().splitlines():
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                entries.append(value)
+    except OSError:
+        pass
+    return entries
+
+
+def dvorak_control(
+    driver: Any,
+    helper: pathlib.Path,
+    client_app: pathlib.Path,
+    evidence: pathlib.Path,
+    initial: dict[str, Any],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "startedAt": shared.timestamp(),
+        "physicalKeyCode": 37,
+        "physicalUSKey": "l",
+        "expectedDvorakText": "n",
+    }
+    session_id: str | None = None
+    result["enable"] = native_transition(
+        helper, evidence, "dvorak-enable", ["enable-source", DVORAK_ID, LAYOUT_TYPE]
+    )
+    result["selection"] = native_transition(
+        helper, evidence, "dvorak-select", ["select-source", DVORAK_ID, LAYOUT_TYPE]
+    )
+    try:
+        session_id, diagnostics, _ = create_client_session(
+            driver, client_app, evidence, "dvorak-control"
+        )
+        element = shared.find_text_view(driver, session_id)
+        result["focus"] = shared.focus_text_view(
+            driver, session_id, element, diagnostics
+        )
+        result["sourceAtDelivery"] = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-at-dvorak-control.json",
+            "source-at-dvorak-control-key-delivery",
+        )
+        key_path = evidence / "key-dvorak-control-37.json"
+        result["key"] = shared.run_command(
+            [str(helper), "post-key", "37", "physical-us-l", str(key_path)]
+        )
+        time.sleep(1)
+        result["clientDiagnostics"] = shared.diagnostics_snapshot(diagnostics)
+    finally:
+        if session_id:
+            driver.request("DELETE", f"/session/{session_id}", timeout=30)
+            result["sessionDeleted"] = True
+    original = initial["data"].get("current", {})
+    result["restoreOriginal"] = native_transition(
+        helper,
+        evidence,
+        "restore-original-after-dvorak",
+        [
+            "select-source",
+            str(original.get("inputSourceID", US_ID)),
+            str(original.get("type", LAYOUT_TYPE)),
+        ],
+    )
+    result["passed"] = (
+        current_id(result["sourceAtDelivery"]) == DVORAK_ID
+        and result.get("clientDiagnostics", {}).get("text") == "n"
+        and result["restoreOriginal"]["data"].get("selectionVerified") is True
+    )
+    result["completedAt"] = shared.timestamp()
+    write_json(evidence / "dvorak-control.json", result)
+    return result
+
+
+def parse_endpoint_evidence(
+    path: pathlib.Path,
+    server_pid: int | None,
+    client_pid: int | None,
+    collection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    events: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line_number, line in enumerate(lines, start=1):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append({**event, "_lineNumber": line_number})
+
+    def message(event: dict[str, Any]) -> str:
+        return str(event.get("eventMessage", ""))
+
+    def lower_message(event: dict[str, Any]) -> str:
+        return message(event).lower()
+
+    def event_time(event: dict[str, Any]) -> dt.datetime | None:
+        value = event.get("timestamp")
+        if not isinstance(value, str):
+            return None
+        try:
+            return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return dt.datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f%z")
+            except ValueError:
+                return None
+
+    def retained(event: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "lineNumber": event.get("_lineNumber"),
+            "timestamp": event.get("timestamp"),
+            "machTimestamp": event.get("machTimestamp"),
+            "processID": event.get("processID"),
+            "userID": event.get("userID"),
+            "processImagePath": event.get("processImagePath"),
+            "subsystem": event.get("subsystem"),
+            "category": event.get("category"),
+            "eventMessage": event.get("eventMessage"),
+        }
+
+    def ordered_correlation(
+        groups: list[list[dict[str, Any]]], maximum_seconds: float = 2
+    ) -> dict[str, Any] | None:
+        matches: list[list[dict[str, Any]]] = []
+
+        def extend(chain: list[dict[str, Any]], group_index: int) -> None:
+            if group_index == len(groups):
+                matches.append(chain)
+                return
+            previous_line = chain[-1].get("_lineNumber", 0) if chain else 0
+            for event in groups[group_index]:
+                if event.get("_lineNumber", 0) <= previous_line:
+                    continue
+                candidate = [*chain, event]
+                start_time = event_time(candidate[0])
+                end_time = event_time(candidate[-1])
+                if start_time is None or end_time is None:
+                    continue
+                if (end_time - start_time).total_seconds() <= maximum_seconds:
+                    extend(candidate, group_index + 1)
+
+        if groups and all(groups):
+            extend([], 0)
+        if not matches:
+            return None
+        best = min(
+            matches,
+            key=lambda chain: (
+                event_time(chain[-1]) - event_time(chain[0])
+            ).total_seconds(),
+        )
+        elapsed = (event_time(best[-1]) - event_time(best[0])).total_seconds()
+        return {
+            "maximumAllowedSeconds": maximum_seconds,
+            "elapsedSeconds": elapsed,
+            "events": [retained(event) for event in best],
+        }
+
+    imklaunchagent_path = (
+        "/System/Library/Frameworks/InputMethodKit.framework/Versions/A/Resources/"
+        "imklaunchagent"
+    )
+    all_registration_services = [
+        event
+        for event in events
+        if "name=com.apple.inputmethodkit.setxpcendpoint" in lower_message(event)
+        and "peer[" not in lower_message(event)
+    ]
+    registration_service = [
+        event
+        for event in all_registration_services
+        if event.get("processID") == server_pid
+    ]
+    other_process_registration_services = [
+        event
+        for event in all_registration_services
+        if event.get("processID") != server_pid
+    ]
+    registration_peer_marker = (
+        f"setxpcendpoint.peer[{server_pid}]" if server_pid else None
+    )
+    all_registration_peers = [
+        event
+        for event in events
+        if event.get("processImagePath") == imklaunchagent_path
+        and "setxpcendpoint.peer[" in lower_message(event)
+    ]
+    registration_peer = [
+        event
+        for event in all_registration_peers
+        if registration_peer_marker
+        and registration_peer_marker in lower_message(event)
+    ]
+    registration_receipt = [
+        event
+        for event in events
+        if event.get("processImagePath") == imklaunchagent_path
+        and "received setimkxpcendpoint:forbundleidentifier: from inputmethod"
+        in lower_message(event)
+    ]
+    registration_chain = ordered_correlation(
+        [registration_service, registration_peer, registration_receipt]
+    )
+    registration_observed = bool(server_pid and registration_chain)
+    other_process_registration_chains: list[dict[str, Any]] = []
+    for service in other_process_registration_services:
+        process_id = service.get("processID")
+        if not isinstance(process_id, int):
+            continue
+        peer_marker = f"setxpcendpoint.peer[{process_id}]"
+        peer_events = [
+            event
+            for event in all_registration_peers
+            if peer_marker in lower_message(event)
+        ]
+        chain = ordered_correlation(
+            [
+                [
+                    event
+                    for event in other_process_registration_services
+                    if event.get("processID") == process_id
+                ],
+                peer_events,
+                registration_receipt,
+            ]
+        )
+        if chain and not any(
+            item.get("processID") == process_id
+            for item in other_process_registration_chains
+        ):
+            other_process_registration_chains.append(
+                {
+                    "processID": process_id,
+                    "processImagePath": service.get("processImagePath"),
+                    "orderedCorrelation": chain,
+                }
+            )
+
+    anonymous_listener = [
+        event
+        for event in events
+        if event.get("processID") == server_pid
+        and "listener=true" in lower_message(event)
+        and "name=(anonymous)" in lower_message(event)
+    ]
+    anonymous_peer_marker = f".peer[{client_pid}]" if client_pid else None
+    anonymous_client_peers = [
+        event
+        for event in events
+        if anonymous_peer_marker
+        and anonymous_peer_marker in lower_message(event)
+        and "com.apple.xpc.anonymous." in lower_message(event)
+    ]
+    anonymous_server_peer = [
+        event
+        for event in anonymous_client_peers
+        if event.get("processID") == server_pid
+    ]
+    anonymous_other_process_peers = [
+        event
+        for event in anonymous_client_peers
+        if event.get("processID") != server_pid
+    ]
+    all_server_activations = [
+        event for event in events if message(event) == "Activate Server"
+    ]
+    server_activation = [
+        event
+        for event in all_server_activations
+        if event.get("processID") == server_pid
+    ]
+    serving_chain = ordered_correlation(
+        [anonymous_server_peer, server_activation]
+    )
+    serving_channel_observed = bool(server_pid and client_pid and serving_chain)
+    other_process_serving_channels: list[dict[str, Any]] = []
+    other_process_ids = sorted(
+        {
+            event.get("processID")
+            for event in anonymous_other_process_peers
+            if isinstance(event.get("processID"), int)
+        }
+    )
+    for process_id in other_process_ids:
+        process_peers = [
+            event
+            for event in anonymous_other_process_peers
+            if event.get("processID") == process_id
+        ]
+        process_activations = [
+            event
+            for event in all_server_activations
+            if event.get("processID") == process_id
+        ]
+        chain = ordered_correlation([process_peers, process_activations])
+        if chain:
+            other_process_serving_channels.append(
+                {
+                    "processID": process_id,
+                    "processImagePath": process_peers[0].get("processImagePath"),
+                    "orderedCorrelation": chain,
+                }
+            )
+    endpoint_observed_under_other_process = bool(
+        other_process_registration_chains or other_process_serving_channels
+    )
+
+    request_peer_marker = (
+        f"getxpcendpoint.peer[{client_pid}]" if client_pid else None
+    )
+    request_peer = [
+        event
+        for event in events
+        if request_peer_marker
+        and event.get("processImagePath") == imklaunchagent_path
+        and request_peer_marker in lower_message(event)
+    ]
+    request_receipt = [
+        event
+        for event in events
+        if event.get("processImagePath") == imklaunchagent_path
+        and "getimkxpcendpointforbundle:reply" in lower_message(event)
+    ]
+    connection_name_refusal = [
+        event
+        for event in events
+        if event.get("processImagePath") == imklaunchagent_path
+        and "refusing connection name for bundle" in lower_message(event)
+    ]
+    endpoint_invalid = [
+        event
+        for event in events
+        if event.get("processImagePath") == imklaunchagent_path
+        and "requestimkxpcendpointinvalid" in lower_message(event)
+        and (client_pid is None or f"pid_t: {client_pid}" in lower_message(event))
+    ]
+    server_initialization = [
+        event
+        for event in events
+        if event.get("processID") == server_pid
+        and message(event) in ("Deactivate Server", "Get bundle identifier")
+    ]
+
+    if registration_observed and serving_channel_observed:
+        topology = "launchagent-registration-and-anonymous-serving-channel"
+    elif serving_channel_observed:
+        topology = "anonymous-serving-channel-without-launchagent-registration"
+    elif registration_observed:
+        topology = "launchagent-registration-without-observed-serving-channel"
+    else:
+        topology = "not-observed"
+
+    internal_endpoint_observed = registration_observed or serving_channel_observed
+    exact_server_xpc = [
+        event
+        for event in events
+        if event.get("processID") == server_pid
+        and event.get("subsystem") == "com.apple.xpc"
+    ]
+    connection_names: set[str] = set()
+    for event in exact_server_xpc:
+        match = re.search(r"(?:^|\s)name=([^\s]+)", message(event))
+        if match:
+            connection_names.add(match.group(1))
+    candidate_events = [
+        *all_registration_services,
+        *all_registration_peers,
+        *registration_receipt,
+        *anonymous_client_peers,
+        *all_server_activations,
+        *request_peer,
+        *request_receipt,
+        *connection_name_refusal,
+        *endpoint_invalid,
+        *server_initialization,
+    ]
+    candidate_processes = sorted(
+        {
+            (
+                event.get("processID"),
+                str(event.get("processImagePath", "")),
+            )
+            for event in candidate_events
+        },
+        key=lambda item: (item[0] is None, item[0] or 0, item[1]),
+    )
+    candidate_subsystems = sorted(
+        {str(event.get("subsystem", "")) for event in candidate_events}
+    )
+    collection = collection or {}
+    collection_predicate = str(collection.get("predicate", ""))
+    collection_exit_ok = collection.get("exitCode") == 0
+    collection_not_truncated = collection.get("retainedTailTruncated") is False
+    exact_server_coverage = bool(
+        server_pid and f"processID == {server_pid}" in collection_predicate
+    )
+    exact_client_peer_coverage = bool(
+        client_pid and f".peer[{client_pid}]" in collection_predicate
+    )
+    launch_agent_coverage = 'process == "imklaunchagent"' in collection_predicate
+    other_process_activation_coverage = (
+        'eventMessage == "Activate Server"' in collection_predicate
+    )
+    predicate_loss_not_supported = bool(
+        collection_exit_ok
+        and collection_not_truncated
+        and exact_server_coverage
+        and exact_client_peer_coverage
+        and launch_agent_coverage
+    )
+    relevant_terms = (
+        "launchinputmethod",
+        "imkxpcendpoint",
+        "setxpcendpoint",
+        "getxpcendpoint",
+        "com.apple.xpc.anonymous.",
+        "activate server",
+        "deactivate server",
+        "get bundle identifier",
+        "inputmethodconnectionname",
+    )
+    relevant_events = [
+        event
+        for event in events
+        if any(term in lower_message(event) for term in relevant_terms)
+    ]
+    relevant_line_numbers = {
+        event.get("_lineNumber") for event in relevant_events
+    }
+    relevant_events.extend(
+        event
+        for event in candidate_events
+        if event.get("_lineNumber") not in relevant_line_numbers
+    )
+    relevant_events.sort(key=lambda event: event.get("_lineNumber", 0))
+    relevant = [retained(event) for event in relevant_events]
+    return {
+        "diagnosticOnly": True,
+        "serverPID": server_pid,
+        "clientPID": client_pid,
+        "topology": topology,
+        "launchAgentRegistration": {
+            "observed": registration_observed,
+            "serviceEventCount": len(registration_service),
+            "peerMarker": registration_peer_marker,
+            "peerEventCount": len(registration_peer),
+            "receiptEventCount": len(registration_receipt),
+            "orderedCorrelation": registration_chain,
+        },
+        "anonymousServingChannel": {
+            "observed": serving_channel_observed,
+            "listenerEventCount": len(anonymous_listener),
+            "peerMarker": anonymous_peer_marker,
+            "exactServerPeerEventCount": len(anonymous_server_peer),
+            "serverActivationEventCount": len(server_activation),
+            "orderedCorrelation": serving_chain,
+        },
+        "clientLaunchAgentRequest": {
+            "peerMarker": request_peer_marker,
+            "peerEventCount": len(request_peer),
+            "receiptEventCount": len(request_receipt),
+            "connectionNameRefusalEventCount": len(connection_name_refusal),
+            "endpointInvalidEventCount": len(endpoint_invalid),
+        },
+        "serverInitializationEventCount": len(server_initialization),
+        "candidateInventory": {
+            "processes": [
+                {"processID": process_id, "processImagePath": process_path}
+                for process_id, process_path in candidate_processes
+            ],
+            "subsystems": candidate_subsystems,
+            "exactServerXPCConnectionNames": sorted(connection_names)[:100],
+            "exactServerXPCConnectionNameLimit": 100,
+            "registrationServiceEventsOwnedByOtherProcesses": [
+                retained(event)
+                for event in other_process_registration_services[:20]
+            ],
+            "anonymousExactClientPeersOwnedByOtherProcesses": [
+                retained(event) for event in anonymous_other_process_peers[:20]
+            ],
+            "correlatedEndpointRegistrationChainsOwnedByOtherProcesses": (
+                other_process_registration_chains[:20]
+            ),
+            "correlatedExactClientServingChannelsOwnedByOtherProcesses": (
+                other_process_serving_channels[:20]
+            ),
+            "rawAnonymousPeersAreNotEndpointEvidenceWithoutIMKActivation": True,
+            "alternativeProcessEventLimit": 20,
+        },
+        "collectionAssessment": {
+            "exitCode": collection.get("exitCode"),
+            "windowStart": collection.get("windowStart"),
+            "windowEnd": collection.get("windowEnd"),
+            "matchedLineCount": collection.get("matchedLineCount"),
+            "retainedLineCount": collection.get("retainedLineCount"),
+            "retainedTailLimit": collection.get("retainedTailLimit"),
+            "retainedTailTruncated": collection.get("retainedTailTruncated"),
+            "predicate": collection.get("predicate"),
+            "predicateCoverage": {
+                "allExactServerRecords": exact_server_coverage,
+                "exactClientPeerMarkerAcrossProcesses": exact_client_peer_coverage,
+                "allLaunchAgentRecords": launch_agent_coverage,
+                "activationMarkerAcrossProcesses": other_process_activation_coverage,
+            },
+        },
+        "internalIMKEndpointObserved": internal_endpoint_observed,
+        "reliableDiagnosticCollectorCandidate": bool(
+            serving_channel_observed and server_pid and client_pid
+        ),
+        "earliestDivergenceFromSuccessfulSquirrelEndpointPath": (
+            "none: exact-server launch-agent registration and serving channel both appeared"
+            if registration_observed and serving_channel_observed
+            else (
+                "server endpoint publication: no exact-server setxpcendpoint service, "
+                "launch-agent peer, and receipt chain appeared before the later exact-server "
+                "anonymous channel served the exact client"
+                if serving_channel_observed
+                else "no exact server and client serving channel was observed"
+            )
+        ),
+        "explanationTests": {
+            "endpointWasNeverCreated": {
+                "result": (
+                    "disconfirmed-for-exact-server"
+                    if internal_endpoint_observed
+                    else (
+                        "disconfirmed-only-outside-exact-server"
+                        if endpoint_observed_under_other_process
+                        else "not-disconfirmed"
+                    )
+                ),
+                "disconfirmingEvidence": "an endpoint registration or anonymous exact-client XPC peer correlated to a process ID, with exact-server IMK activation required for the serving-channel classification",
+            },
+            "endpointBelongedToAnotherProcess": {
+                "result": (
+                    "also-observed"
+                    if internal_endpoint_observed
+                    and endpoint_observed_under_other_process
+                    else (
+                        "disconfirmed"
+                        if internal_endpoint_observed
+                        else (
+                            "supported"
+                            if endpoint_observed_under_other_process
+                            else "not-disconfirmed"
+                        )
+                    )
+                ),
+                "disconfirmingEvidence": "the serving peer event processID matches the independently path-verified automatic input-method PID",
+                "otherRegistrationServiceEventCount": len(
+                    other_process_registration_services
+                ),
+                "rawOtherProcessAnonymousExactClientPeerEventCount": len(
+                    anonymous_other_process_peers
+                ),
+                "correlatedOtherProcessRegistrationChainCount": len(
+                    other_process_registration_chains
+                ),
+                "correlatedOtherProcessServingChannelCount": len(
+                    other_process_serving_channels
+                ),
+            },
+            "differentServiceOrName": {
+                "result": (
+                    "supported"
+                    if serving_channel_observed and not registration_observed
+                    else (
+                        "disconfirmed" if registration_observed else "not-disconfirmed"
+                    )
+                ),
+                "disconfirmingEvidence": "the Squirrel-style exact-server com.apple.inputmethodkit.setxpcendpoint service, launch-agent peer, and receipt chain",
+                "exactServerXPCConnectionNames": sorted(connection_names)[:100],
+            },
+            "differentSubsystem": {
+                "result": (
+                    "not-supported"
+                    if serving_channel_observed and predicate_loss_not_supported
+                    else "not-disconfirmed"
+                ),
+                "observedCandidateSubsystems": candidate_subsystems,
+                "evidence": "candidate recognition uses exact process IDs and endpoint messages across subsystem values; a serving channel requires an anonymous exact-client peer and IMK activation owned by the same process",
+            },
+            "differentTopology": {
+                "result": (
+                    "supported"
+                    if serving_channel_observed and not registration_observed
+                    else (
+                        "disconfirmed" if registration_observed else "not-disconfirmed"
+                    )
+                ),
+                "observedTopology": topology,
+                "squirrelReferenceTopology": "launchagent-registration-and-anonymous-serving-channel",
+            },
+            "timingWindow": {
+                "result": (
+                    "not-supported-within-retained-window"
+                    if server_initialization and serving_channel_observed
+                    else "not-disconfirmed"
+                ),
+                "disconfirmingEvidence": "the bounded query spans exact-server initialization through exact-client serving and activation",
+                "residualUncertainty": "unified-log records outside the bounded query window were not collected",
+            },
+            "collectionPredicate": {
+                "result": (
+                    "not-supported" if predicate_loss_not_supported else "not-disconfirmed"
+                ),
+                "disconfirmingEvidence": "the successful query retained all exact-server records, all launch-agent records, and the exact-client peer marker across owning processes without tail truncation",
+                "assessment": {
+                    "querySucceeded": collection_exit_ok,
+                    "retainedTailNotTruncated": collection_not_truncated,
+                    "allExactServerRecords": exact_server_coverage,
+                    "exactClientPeerMarkerAcrossProcesses": exact_client_peer_coverage,
+                    "allLaunchAgentRecords": launch_agent_coverage,
+                },
+            },
+            "priorParserOnlyRecognizedSquirrelRegistration": {
+                "result": (
+                    "confirmed"
+                    if serving_channel_observed and not registration_observed
+                    else "not-confirmed"
+                ),
+                "evidence": "the prior parser accepted only setxpcendpoint peer and receipt records and therefore did not classify the exact-server anonymous serving channel",
+            },
+        },
+        "retainedRelevantEvents": relevant[:250],
+        "retainedRelevantEventLimit": 250,
+    }
+
+
+def collect_crashes(evidence: pathlib.Path, started_epoch: float) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    directories = [
+        pathlib.Path.home() / "Library" / "Logs" / "DiagnosticReports",
+        pathlib.Path("/Library/Logs/DiagnosticReports"),
+    ]
+    for directory in directories:
+        try:
+            candidates = list(directory.glob("unicorn*")) + list(directory.glob("Unicorn*"))
+        except OSError:
+            candidates = []
+        for source in candidates:
+            try:
+                metadata = source.stat()
+            except OSError:
+                continue
+            if metadata.st_mtime < started_epoch:
+                continue
+            destination = evidence / f"crash-{len(results) + 1}-{source.name}"
+            try:
+                with source.open("rb") as handle:
+                    destination.write_bytes(handle.read(1_048_576))
+                results.append(
+                    {
+                        "source": str(source),
+                        "modifiedAtEpoch": metadata.st_mtime,
+                        "size": metadata.st_size,
+                        "retainedPath": destination.name,
+                        "retainedByteLimit": 1_048_576,
+                    }
+                )
+            except OSError as error:
+                results.append({"source": str(source), "error": str(error)})
+    return results
+
+
+def automatic_activation(
+    driver: Any,
+    helper: pathlib.Path,
+    client_app: pathlib.Path,
+    installed_app: pathlib.Path,
+    evidence: pathlib.Path,
+    trigger_started_at: str,
+) -> dict[str, Any]:
+    started_epoch = time.time()
+    result: dict[str, Any] = {
+        "startedAt": trigger_started_at,
+        "attempted": True,
+        "initiatingTrigger": "exact Unicorn TIS selection followed by focused AppKit client activation and physical backslash-l-enter input",
+        "directExecutableLaunchPerformed": False,
+        "deadlineSeconds": AUTOMATIC_DEADLINE_SECONDS,
+    }
+    session_id: str | None = None
+    process_observations: list[dict[str, Any]] = []
+    try:
+        session_id, diagnostics, timeline_path = create_client_session(
+            driver, client_app, evidence, "unicorn-supported-installer"
+        )
+        element = shared.find_text_view(driver, session_id)
+        result["focus"] = shared.focus_text_view(
+            driver, session_id, element, diagnostics
+        )
+        client_process_observations: list[dict[str, Any]] = []
+        client_deadline = time.monotonic() + 5
+        while time.monotonic() < client_deadline:
+            client_observation = client_process_snapshot(client_app)
+            client_process_observations.append(client_observation)
+            if (
+                client_observation.get("processCount") == 1
+                and client_observation.get(
+                    "allObservedProcessesHaveExactExecutablePath"
+                )
+                is True
+            ):
+                break
+            time.sleep(0.25)
+        exact_client_pid = (
+            client_process_observations[-1].get("pids", [None])[0]
+            if client_process_observations
+            and client_process_observations[-1].get("processCount") == 1
+            and client_process_observations[-1].get(
+                "allObservedProcessesHaveExactExecutablePath"
+            )
+            is True
+            else None
+        )
+        result["clientProcessObservations"] = client_process_observations
+        result["exactClientPID"] = exact_client_pid
+        result["sourceAtTrigger"] = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-at-unicorn-automatic-trigger.json",
+            "source-at-unicorn-automatic-trigger",
+        )
+        deadline = time.monotonic() + AUTOMATIC_DEADLINE_SECONDS
+        while time.monotonic() < deadline:
+            observation = process_snapshot(installed_app)
+            process_observations.append(observation)
+            if observation.get("processCount") == 1:
+                break
+            time.sleep(0.5)
+        keys: list[dict[str, Any]] = []
+        for index, (key_code, label) in enumerate(
+            ((42, "backslash"), (37, "l"), (36, "enter")), start=1
+        ):
+            key_path = evidence / f"key-unicorn-{index}-{label}.json"
+            command = shared.run_command(
+                [str(helper), "post-key", str(key_code), label, str(key_path)],
+                timeout=15,
+            )
+            time.sleep(0.5)
+            keys.append(
+                {
+                    "index": index,
+                    "label": label,
+                    "keyCode": key_code,
+                    "command": command,
+                    "event": load_json(key_path, {}),
+                    "clientDiagnosticsAfter": shared.diagnostics_snapshot(diagnostics),
+                    "processAfter": process_snapshot(installed_app),
+                }
+            )
+        final_deadline = time.monotonic() + 4
+        while time.monotonic() < final_deadline:
+            process_observations.append(process_snapshot(installed_app))
+            if shared.diagnostics_snapshot(diagnostics).get("textScalars") == EXPECTED_SCALARS:
+                break
+            time.sleep(0.25)
+        time.sleep(0.5)
+        final_process = process_snapshot(installed_app)
+        process_observations.append(final_process)
+        final_diagnostics = shared.diagnostics_snapshot(diagnostics)
+        timeline = timeline_entries(timeline_path)
+        marked = [entry for entry in timeline if entry.get("hasMarkedText") is True]
+        completed_at = shared.timestamp()
+        logs = capture_log_window(
+            evidence,
+            "automatic-activation-system-log",
+            result["startedAt"],
+            completed_at,
+            1600,
+        )
+        all_pid_sets = [
+            set(observation.get("pids", []))
+            for observation in process_observations
+            if observation.get("processCount", 0) > 0
+        ] + [
+            set(key["processAfter"].get("pids", []))
+            for key in keys
+            if key["processAfter"].get("processCount", 0) > 0
+        ]
+        observed_pids = sorted(set().union(*all_pid_sets)) if all_pid_sets else []
+        exact_pid = observed_pids[0] if len(observed_pids) == 1 else None
+        endpoint_predicate_clauses = [
+            'process == "imklaunchagent"',
+            'eventMessage CONTAINS[c] "IMKXPCEndpoint"',
+            'eventMessage CONTAINS[c] "setxpcendpoint"',
+            'eventMessage CONTAINS[c] "getxpcendpoint"',
+            'eventMessage CONTAINS[c] "InputMethodConnectionName"',
+            'eventMessage == "Activate Server"',
+        ]
+        if exact_pid is not None:
+            endpoint_predicate_clauses.append(f"processID == {exact_pid}")
+        if exact_client_pid is not None:
+            endpoint_predicate_clauses.extend(
+                [
+                    f'eventMessage CONTAINS[c] ".peer[{exact_client_pid}]"',
+                    f'eventMessage CONTAINS[c] "pid_t: {exact_client_pid}"',
+                ]
+            )
+        endpoint_logs = capture_log_window(
+            evidence,
+            "automatic-activation-endpoint-log",
+            result["startedAt"],
+            completed_at,
+            2400,
+            f"({' OR '.join(endpoint_predicate_clauses)})",
+        )
+        endpoint = parse_endpoint_evidence(
+            evidence / endpoint_logs["path"],
+            exact_pid,
+            exact_client_pid,
+            endpoint_logs,
+        )
+        build_info = load_json(evidence / "build-identity.json", {}).get(
+            "infoPlist", {}
+        )
+        connection_name_keys = sorted(
+            key
+            for key in build_info
+            if key.lower() == "inputmethodconnectionname"
+        )
+        endpoint["connectionNameDeclaration"] = {
+            "squirrelReferenceKey": "InputMethodConnectionName",
+            "exactSquirrelReferenceKeyPresent": "InputMethodConnectionName" in build_info,
+            "caseVariantKeys": connection_name_keys,
+            "caseVariantValues": {
+                key: build_info.get(key) for key in connection_name_keys
+            },
+            "runtimeServerName": f"{BUNDLE_ID}_Connection",
+            "causalConclusion": "not-tested: product behavior was not changed",
+        }
+        exact_path_proven = any(
+            observation.get("allObservedProcessesHaveExactExecutablePath") is True
+            and observation.get("pids") == [exact_pid]
+            for observation in process_observations
+        ) if exact_pid else False
+        first_exact = next(
+            (
+                observation
+                for observation in process_observations
+                if observation.get("pids") == [exact_pid]
+            ),
+            None,
+        )
+        final_same_process = final_process.get("pids") == [exact_pid]
+        composition_ended = (
+            final_diagnostics.get("hasMarkedText") is False
+            and (final_diagnostics.get("markedRange") or {}).get("length") == 0
+        )
+        exact_text = final_diagnostics.get("textScalars") == EXPECTED_SCALARS
+        exact_source = (
+            current_id(result["sourceAtTrigger"]) == TARGET_SOURCE_ID
+            and current_bundle(result["sourceAtTrigger"]) == BUNDLE_ID
+        )
+        build_identity = load_json(evidence / "build-identity.json", {})
+        observed_before_commit = (
+            keys[-2].get("clientDiagnosticsAfter", {}) if len(keys) >= 2 else {}
+        )
+        composition_evidence = {
+            "observedInput": {
+                "physicalKeys": [key.get("label") for key in keys],
+                "keyCodes": [key.get("keyCode") for key in keys],
+                "markedTextBeforeCommit": observed_before_commit.get("text"),
+                "markedTextScalarsBeforeCommit": observed_before_commit.get("textScalars"),
+            },
+            "authoritativeBundledMapping": build_identity.get("compositionMapping"),
+            "committedOutput": {
+                "text": final_diagnostics.get("text"),
+                "textScalars": final_diagnostics.get("textScalars"),
+                "hasMarkedText": final_diagnostics.get("hasMarkedText"),
+            },
+        }
+        success = (
+            exact_source
+            and exact_pid is not None
+            and exact_path_proven
+            and first_exact is not None
+            and final_same_process
+            and bool(marked)
+            and exact_text
+            and composition_ended
+        )
+        result.update(
+            {
+                "completedAt": completed_at,
+                "keys": keys,
+                "processObservations": process_observations,
+                "automaticProcessPIDs": observed_pids,
+                "exactAutomaticProcessCount": len(observed_pids),
+                "automaticProcessObserved": exact_pid is not None,
+                "exactExecutableIdentityProven": exact_path_proven,
+                "processLifetime": {
+                    "firstExactObservation": first_exact,
+                    "finalObservation": final_process,
+                    "sameExactProcessAliveAfterComposition": final_same_process,
+                },
+                "endpointEvidence": endpoint,
+                "correlatedEndpointObserved": endpoint[
+                    "launchAgentRegistration"
+                ]["observed"],
+                "internalIMKEndpointObserved": endpoint[
+                    "internalIMKEndpointObserved"
+                ],
+                "endpointObservationDiagnosticOnly": True,
+                "markedCompositionObserved": bool(marked),
+                "markedCompositionSamples": marked[:12],
+                "compositionEvidence": composition_evidence,
+                "finalClientDiagnostics": final_diagnostics,
+                "sourceSelectedAtTrigger": exact_source,
+                "exactTextAssertionPassed": exact_text,
+                "compositionEnded": composition_ended,
+                "automaticActivationSucceeded": success,
+                "logs": logs,
+                "endpointLogs": endpoint_logs,
+                "newDiagnosticReports": collect_crashes(evidence, started_epoch),
+            }
+        )
+        if exact_pid is not None:
+            state_path = evidence / "installation-state.json"
+            state = load_json(state_path, {})
+            state["automaticProcess"] = {
+                "pid": exact_pid,
+                "executablePath": str(
+                    installed_app / "Contents" / "MacOS" / EXECUTABLE_NAME
+                ),
+                "launchMethod": "automatic InputMethodKit activation",
+                "launchedByUID": os.getuid(),
+                "firstObservedAt": first_exact.get("timestamp") if first_exact else None,
+            }
+            write_json(state_path, state)
+    except Exception as error:
+        result["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
+        }
+        result["automaticActivationSucceeded"] = False
+    finally:
+        if session_id:
+            try:
+                driver.request("DELETE", f"/session/{session_id}", timeout=30)
+                result["sessionDeleted"] = True
+            except Exception as error:
+                result["sessionDeleteError"] = shared.bounded(str(error))
+    result.setdefault("completedAt", shared.timestamp())
+    write_json(evidence / "automatic-activation.json", result)
+    return result
+
+
+def run_experiment(
+    evidence: pathlib.Path,
+    helper: pathlib.Path,
+    client_app: pathlib.Path,
+    installed_app: pathlib.Path,
+    experiment: str,
+) -> int:
+    if experiment not in ALLOWED_EXPERIMENTS:
+        raise ValueError(f"Unsupported Unicorn experiment: {experiment}")
+    report: dict[str, Any] = {
+        "startedAt": shared.timestamp(),
+        "experiment": experiment,
+        "stageOrder": [
+            "same-Aqua-user Dvorak public selection and physical-event control",
+            "exact installed Unicorn public TIS registration",
+            "exact parent then target public enablement",
+            "exact semantic Allow action if source properties show approval pending",
+            "exact target public selection without direct process execution",
+            "focused AppKit client physical backslash-l-enter composition",
+            "automatic exact process, source, marked-text, commit, and lifetime proof plus diagnostic endpoint topology",
+        ],
+        "directExecutableLaunchPerformed": False,
+        "server": {},
+    }
+    appium_process = None
+    appium_handle = None
+    completed = False
+    try:
+        driver, appium_process, appium_handle, report["server"] = start_appium(evidence)
+        if not report["server"]["readiness"].get("ready"):
+            raise RuntimeError("Appium server did not become ready")
+        initial = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-before-control.json",
+            "before-same-session-control",
+        )
+        report["initialSources"] = initial
+        report["dvorakControl"] = dvorak_control(
+            driver, helper, client_app, evidence, initial
+        )
+        report["unicornRegistration"] = native_transition(
+            helper,
+            evidence,
+            "unicorn-registration",
+            ["register", str(installed_app)],
+        )
+        report["unicornParentEnablement"] = native_transition(
+            helper, evidence, "unicorn-parent-enablement", ["enable-parents"]
+        )
+        report["unicornTargetEnablement"] = native_transition(
+            helper, evidence, "unicorn-target-enablement", ["enable-target"]
+        )
+        report["systemSettingsApproval"] = approve_if_required(
+            driver, helper, evidence
+        )
+        if experiment == SEMANTIC_ADD_EXPERIMENT:
+            report["semanticInputSourceAdd"] = semantic_input_source_add(
+                driver, helper, evidence
+            )
+            report["postApprovalTargetEnablement"] = {
+                "attempted": False,
+                "reason": "semantic Add replaces the ineffective repeated API request",
+                "singleChangedCondition": True,
+            }
+        elif experiment == POST_APPROVAL_ENABLE_EXPERIMENT:
+            report["postApprovalTargetEnablement"] = native_transition(
+                helper,
+                evidence,
+                "unicorn-target-reenable-after-approval",
+                ["enable-target"],
+            )
+            report["semanticInputSourceAdd"] = {
+                "attempted": False,
+                "reason": "this arm changes only repeated public mode enablement",
+            }
+        else:
+            report["postApprovalTargetEnablement"] = {
+                "attempted": False,
+                "reason": "first arm does not repeat target enablement after approval",
+                "singleChangedCondition": False,
+            }
+            report["semanticInputSourceAdd"] = {
+                "attempted": False,
+                "reason": "first arm uses only public registration and enablement APIs",
+            }
+        report["sameSessionBoundary"] = {
+            "timestamp": shared.timestamp(),
+            "uid": os.getuid(),
+            "user": os.environ.get("USER"),
+            "consoleUser": load_json(evidence / "aqua-session.json", {}).get("consoleUser"),
+            "guiBootstrapDomain": f"gui/{os.getuid()}",
+            "canonicalAppURL": str(installed_app.resolve()),
+            "exactExecutablePath": str(
+                installed_app / "Contents" / "MacOS" / EXECUTABLE_NAME
+            ),
+            "processBeforeSelection": process_snapshot(installed_app),
+        }
+        if report["sameSessionBoundary"]["processBeforeSelection"].get("processCount") != 0:
+            raise RuntimeError("Unicorn was running before the automatic activation trigger")
+        state_path = evidence / "installation-state.json"
+        state = load_json(state_path, {})
+        state["selectionStarted"] = True
+        write_json(state_path, state)
+        report["unicornSelection"] = native_transition(
+            helper, evidence, "unicorn-selection", ["select-target"]
+        )
+        report["automaticActivation"] = automatic_activation(
+            driver,
+            helper,
+            client_app,
+            installed_app,
+            evidence,
+            report["unicornSelection"]["data"].get(
+                "startedAt", shared.timestamp()
+            ),
+        )
+        report["finalSourcesBeforeCleanup"] = source_snapshot(
+            helper,
+            evidence,
+            "input-sources-final-before-cleanup.json",
+            "final-state-before-unconditional-cleanup",
+        )
+        completed = True
+    except Exception as error:
+        report["error"] = {
+            "type": type(error).__name__,
+            "message": shared.bounded(str(error)),
+            "timestamp": shared.timestamp(),
+        }
+    finally:
+        if appium_process is not None and appium_handle is not None:
+            stop_appium(appium_process, appium_handle, report["server"])
+    report["completedAt"] = shared.timestamp()
+    report["executionCompleted"] = completed
+    write_json(evidence / "experiment.json", report)
+    return 0 if completed else 3
+
+
+def earliest_divergence(report: dict[str, Any]) -> str:
+    installation = load_json(
+        pathlib.Path(report.get("evidencePath", "")) / "installation-after.json", {}
+    ) if report.get("evidencePath") else {}
+    registration = report.get("unicornRegistration", {}).get("data", {})
+    after_approval = (
+        report.get("systemSettingsApproval", {})
+        .get("sourceImmediatelyAfterAllow", {})
+        .get("data", {})
+    )
+    post_approval_enablement = report.get("postApprovalTargetEnablement", {})
+    semantic_add = report.get("semanticInputSourceAdd", {})
+    if semantic_add.get("attempted") is True:
+        eligibility = semantic_add.get(
+            "sourceImmediatelyAfterSemanticAdd", {}
+        ).get("data", {})
+    elif post_approval_enablement.get("attempted") is not False:
+        eligibility = post_approval_enablement.get("data", {}).get("after", {})
+    else:
+        eligibility = after_approval
+    selection = report.get("unicornSelection", {}).get("data", {})
+    activation = report.get("automaticActivation", {})
+    if installation and not installation.get("app", {}).get("exists"):
+        return "supported installer did not create the exact app"
+    if registration.get("status") != 0:
+        return "public TIS registration"
+    if registration.get("after", {}).get("enumeration", {}).get("unicornSourceCount", 0) == 0:
+        return "exact Unicorn source enumeration after registration"
+    if eligibility.get("prerequisites", {}).get("allDocumentedSelectionPrerequisitesSatisfied") is not True:
+        return "exact source enablement or required approval"
+    if selection.get("selectionVerified") is not True:
+        return "exact Unicorn source selection"
+    if activation.get("automaticProcessObserved") is not True:
+        return "automatic exact Unicorn process creation"
+    if activation.get("exactExecutableIdentityProven") is not True:
+        return "automatic executable identity proof"
+    if activation.get("markedCompositionObserved") is not True:
+        return "marked-text composition"
+    if activation.get("exactTextAssertionPassed") is not True:
+        return "exact committed Unicode output"
+    if activation.get("compositionEnded") is not True:
+        return "clean composition end"
+    return "none"
+
+
+def finalize(evidence: pathlib.Path, producer_status: int) -> None:
+    summary = load_json(evidence / "summary.json", {})
+    report = load_json(evidence / "experiment.json", {})
+    cleanup = load_json(evidence / "cleanup.json", {})
+    activation = report.get("automaticActivation", {})
+    endpoint = activation.get("endpointEvidence", {})
+    registration_endpoint = (
+        endpoint.get("launchAgentRegistration", {}).get("observed") is True
+    )
+    serving_endpoint = endpoint.get("anonymousServingChannel", {}).get("observed") is True
+    report_for_diagnosis = dict(report)
+    report_for_diagnosis["evidencePath"] = str(evidence)
+    divergence = earliest_divergence(report_for_diagnosis)
+    success = (
+        producer_status == 0
+        and report.get("executionCompleted") is True
+        and activation.get("automaticActivationSucceeded") is True
+        and cleanup.get("success") is True
+    )
+    summary.update(
+        {
+            "status": "completed",
+            "completedAt": shared.timestamp(),
+            "producerExitCode": producer_status,
+            "experimentExecutionCompleted": report.get("executionCompleted") is True,
+            "automaticActivationSucceeded": activation.get("automaticActivationSucceeded") is True,
+            "cleanupPassed": cleanup.get("success") is True,
+            "allSuccessConditionsProven": success,
+            "resultMatrix": {
+                "automaticExactProcess": activation.get("automaticProcessObserved") is True
+                and activation.get("exactExecutableIdentityProven") is True
+                and activation.get("processLifetime", {}).get("sameExactProcessAliveAfterComposition") is True,
+                "correlatedEndpoint": activation.get("correlatedEndpointObserved") is True,
+                "launchAgentRegistrationEndpointDiagnostic": registration_endpoint,
+                "exactServerClientEndpointDiagnostic": serving_endpoint,
+                "internalIMKEndpointDiagnostic": endpoint.get(
+                    "internalIMKEndpointObserved"
+                )
+                is True,
+                "exactSourceCurrent": activation.get("sourceSelectedAtTrigger") is True,
+                "markedText": activation.get("markedCompositionObserved") is True,
+                "exactCommittedText": activation.get("exactTextAssertionPassed") is True
+                and activation.get("compositionEnded") is True,
+                "cleanup": cleanup.get("success") is True,
+                "dvorakControl": report.get("dvorakControl", {}).get("passed") is True,
+            },
+            "diagnosis": {
+                "earliestAuthoritativeDivergenceFromSuccessfulSquirrel": divergence,
+                "endpointPathEarliestDivergenceFromSuccessfulSquirrel": endpoint.get(
+                    "earliestDivergenceFromSuccessfulSquirrelEndpointPath"
+                ),
+                "directExecutableLaunchPerformed": False,
+                "endpointObservationDiagnosticOnly": True,
+                "conclusion": (
+                    "Every authoritative automatic Unicorn activation and composition condition was directly proven; endpoint records are diagnostic."
+                    if success
+                    else f"Unicorn E2E success is not claimed. The earliest directly observed authoritative divergence is {divergence}."
+                ),
+                "residualUncertainty": (
+                    "The private reason for the different endpoint-publication topology is not inferred. The connection-name metadata, signing, SDK, placement, ownership, and server lifecycle remain unisolated product or distribution differences."
+                    if success
+                    else "The failed authoritative boundary does not identify a deeper cause. Product and distribution differences remain hypotheses unless isolated by a separately authorized counterfactual."
+                ),
+            },
+            "endpointInvestigation": {
+                "diagnosticCollectorImplementable": endpoint.get(
+                    "reliableDiagnosticCollectorCandidate"
+                )
+                is True,
+                "collectorBasis": "independently path-verified exact server and client PIDs correlated to processID-bearing unified-log XPC peer and IMK activation records",
+                "successfulSquirrelReference": {
+                    "runURL": "https://github.com/vic0103520/unicorn-macOS/actions/runs/33147470444",
+                    "serverPID": 6266,
+                    "clientPID": 6262,
+                    "connectionNameDeclaration": {
+                        "InputMethodConnectionName": "Squirrel_Connection"
+                    },
+                    "observedTopology": "exact Squirrel setxpcendpoint service, imklaunchagent peer and receipt, then exact-server anonymous peer for the exact client and Activate Server",
+                    "endpointInvalidAlsoObserved": True,
+                },
+                "unicornTopology": endpoint.get("topology"),
+                "connectionNameDeclaration": endpoint.get(
+                    "connectionNameDeclaration"
+                ),
+                "explanationTests": endpoint.get("explanationTests"),
+                "limitation": "Unified-log endpoint records are private diagnostics and must not gate hosted E2E success.",
+            },
+            "boundary": {
+                "hostedSetup": "build exact revision, run checked-in installer, configure XCTest automation, request public source enablement, and complete any exact Allow prompt",
+                "normalUserActivation": "select exact Unicorn source, focus a normal AppKit text client, and type physical backslash-l-enter",
+            },
+        }
+    )
+    write_json(evidence / "summary.json", summary)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    init_parser = subparsers.add_parser("init")
+    init_parser.add_argument("evidence", type=pathlib.Path)
+    init_parser.add_argument("installed_app", type=pathlib.Path)
+    init_parser.add_argument("experiment", choices=sorted(ALLOWED_EXPERIMENTS))
+    preflight_parser = subparsers.add_parser("preflight")
+    preflight_parser.add_argument("evidence", type=pathlib.Path)
+    preflight_parser.add_argument("helper", type=pathlib.Path)
+    build_parser = subparsers.add_parser("record-build")
+    build_parser.add_argument("evidence", type=pathlib.Path)
+    build_parser.add_argument("app", type=pathlib.Path)
+    build_parser.add_argument("client_app", type=pathlib.Path)
+    install_parser = subparsers.add_parser("record-installation")
+    install_parser.add_argument("evidence", type=pathlib.Path)
+    install_parser.add_argument("app", type=pathlib.Path)
+    install_parser.add_argument("helper", type=pathlib.Path)
+    install_parser.add_argument("stage", choices=("before", "after"))
+    run_parser = subparsers.add_parser("run")
+    run_parser.add_argument("evidence", type=pathlib.Path)
+    run_parser.add_argument("helper", type=pathlib.Path)
+    run_parser.add_argument("client_app", type=pathlib.Path)
+    run_parser.add_argument("installed_app", type=pathlib.Path)
+    run_parser.add_argument("experiment", choices=sorted(ALLOWED_EXPERIMENTS))
+    finalize_parser = subparsers.add_parser("finalize")
+    finalize_parser.add_argument("evidence", type=pathlib.Path)
+    finalize_parser.add_argument("producer_status", type=int)
+    arguments = parser.parse_args()
+    if arguments.command == "init":
+        initialize(arguments.evidence, arguments.installed_app, arguments.experiment)
+    elif arguments.command == "preflight":
+        preflight(arguments.evidence, arguments.helper)
+    elif arguments.command == "record-build":
+        record_build(arguments.evidence, arguments.app, arguments.client_app)
+    elif arguments.command == "record-installation":
+        record_installation(
+            arguments.evidence, arguments.app, arguments.helper, arguments.stage
+        )
+    elif arguments.command == "run":
+        return run_experiment(
+            arguments.evidence,
+            arguments.helper,
+            arguments.client_app,
+            arguments.installed_app,
+            arguments.experiment,
+        )
+    elif arguments.command == "finalize":
+        finalize(arguments.evidence, arguments.producer_status)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

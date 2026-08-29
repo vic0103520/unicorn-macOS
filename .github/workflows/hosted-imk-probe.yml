@@ -1,0 +1,134 @@
+name: Hosted ARM64 InputMethodKit Probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: Bounded hosted InputMethodKit experiment
+        required: true
+        default: disposable-unicorn
+        type: choice
+        options:
+          - disposable-unicorn
+          - third-party-squirrel-control
+          - squirrel-automatic-baseline
+          - squirrel-automatic-ls-refresh
+          - squirrel-official-installer
+          - unicorn-supported-installer
+          - unicorn-post-approval-mode-enable
+          - unicorn-semantic-input-source-add
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicorn-hosted-arm64-inputmethodkit-gui
+  cancel-in-progress: false
+
+jobs:
+  hosted-imk-probe:
+    name: macOS 15 ARM64 hosted probe
+    if: inputs.experiment == 'disposable-unicorn'
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out trusted branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run bounded InputMethodKit probe
+        id: producer
+        run: Tests/HostedIMKProbe/run.sh
+
+      - name: Ensure input-source cleanup
+        id: cleanup
+        if: always()
+        run: Tests/HostedIMKProbe/cleanup.sh
+
+      - name: Finalize machine-readable evidence
+        if: always()
+        run: |
+          status="$(cat build/HostedIMKProbe/evidence/producer-exit-code.txt 2>/dev/null || printf '1')"
+          python3 Tests/HostedIMKProbe/probe.py finalize build/HostedIMKProbe/evidence "$status"
+
+      - name: Upload bounded probe evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-arm64-inputmethodkit-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/HostedIMKProbe/evidence
+          if-no-files-found: error
+          retention-days: 14
+
+  third-party-input-method-control:
+    name: macOS 15 ARM64 bounded Squirrel activation experiment
+    if: contains(fromJSON('["third-party-squirrel-control", "squirrel-automatic-baseline", "squirrel-automatic-ls-refresh", "squirrel-official-installer"]'), inputs.experiment)
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out trusted branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run bounded Squirrel activation experiment
+        id: producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SQUIRREL_EXPERIMENT: ${{ inputs.experiment }}
+        run: Tests/HostedThirdPartyIMControl/run.sh
+
+      - name: Restore the original source and remove temporary Squirrel state
+        if: always()
+        run: Tests/HostedThirdPartyIMControl/cleanup.sh
+
+      - name: Finalize machine-readable evidence
+        if: always()
+        run: |
+          status="$(cat build/HostedThirdPartyIMControl/evidence/producer-exit-code.txt 2>/dev/null || printf '1')"
+          python3 Tests/HostedThirdPartyIMControl/control.py \
+            finalize build/HostedThirdPartyIMControl/evidence "$status"
+
+      - name: Upload bounded diagnosis evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-arm64-${{ inputs.experiment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/HostedThirdPartyIMControl/evidence
+          if-no-files-found: error
+          retention-days: 14
+
+  unicorn-supported-installer:
+    name: macOS 15 ARM64 supported Unicorn automatic activation
+    if: contains(fromJSON('["unicorn-supported-installer", "unicorn-post-approval-mode-enable", "unicorn-semantic-input-source-add"]'), inputs.experiment)
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out exact revision under test
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run bounded Unicorn automatic-activation experiment
+        id: producer
+        env:
+          UNICORN_EXPERIMENT: ${{ inputs.experiment }}
+        run: Tests/HostedUnicornAutoActivation/run.sh
+
+      - name: Restore initial source and tracked non-preexisting state
+        if: always()
+        run: Tests/HostedUnicornAutoActivation/cleanup.sh
+
+      - name: Finalize machine-readable evidence
+        if: always()
+        run: |
+          status="$(cat build/HostedUnicornAutoActivation/evidence/producer-exit-code.txt 2>/dev/null || printf '1')"
+          python3 Tests/HostedUnicornAutoActivation/control.py \
+            finalize build/HostedUnicornAutoActivation/evidence "$status"
+
+      - name: Upload bounded Unicorn evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-arm64-${{ inputs.experiment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/HostedUnicornAutoActivation/evidence
+          if-no-files-found: error
+          retention-days: 14

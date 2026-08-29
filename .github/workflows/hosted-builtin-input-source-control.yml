@@ -1,0 +1,38 @@
+name: Hosted ARM64 Built-in Input Source Control
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicorn-hosted-arm64-inputmethodkit-gui
+  cancel-in-progress: false
+
+jobs:
+  built-in-input-source-control:
+    name: macOS 15 ARM64 built-in source control
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out trusted branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run bounded built-in input-source control
+        id: producer
+        run: Tests/HostedBuiltinInputSourceControl/run.sh
+
+      - name: Restore built-in source state
+        if: always()
+        run: Tests/HostedBuiltinInputSourceControl/cleanup.sh
+
+      - name: Upload bounded control evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-arm64-built-in-source-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/HostedBuiltinInputSourceControl/evidence
+          if-no-files-found: error
+          retention-days: 14
