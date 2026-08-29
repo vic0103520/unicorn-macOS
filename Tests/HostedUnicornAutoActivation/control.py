@@ -1264,11 +1264,16 @@ def parse_endpoint_evidence(
     registration_peer_marker = (
         f"setxpcendpoint.peer[{server_pid}]" if server_pid else None
     )
-    registration_peer = [
+    all_registration_peers = [
         event
         for event in events
+        if event.get("processImagePath") == imklaunchagent_path
+        and "setxpcendpoint.peer[" in lower_message(event)
+    ]
+    registration_peer = [
+        event
+        for event in all_registration_peers
         if registration_peer_marker
-        and event.get("processImagePath") == imklaunchagent_path
         and registration_peer_marker in lower_message(event)
     ]
     registration_receipt = [
@@ -1282,6 +1287,39 @@ def parse_endpoint_evidence(
         [registration_service, registration_peer, registration_receipt]
     )
     registration_observed = bool(server_pid and registration_chain)
+    other_process_registration_chains: list[dict[str, Any]] = []
+    for service in other_process_registration_services:
+        process_id = service.get("processID")
+        if not isinstance(process_id, int):
+            continue
+        peer_marker = f"setxpcendpoint.peer[{process_id}]"
+        peer_events = [
+            event
+            for event in all_registration_peers
+            if peer_marker in lower_message(event)
+        ]
+        chain = ordered_correlation(
+            [
+                [
+                    event
+                    for event in other_process_registration_services
+                    if event.get("processID") == process_id
+                ],
+                peer_events,
+                registration_receipt,
+            ]
+        )
+        if chain and not any(
+            item.get("processID") == process_id
+            for item in other_process_registration_chains
+        ):
+            other_process_registration_chains.append(
+                {
+                    "processID": process_id,
+                    "processImagePath": service.get("processImagePath"),
+                    "orderedCorrelation": chain,
+                }
+            )
 
     anonymous_listener = [
         event
@@ -1308,16 +1346,49 @@ def parse_endpoint_evidence(
         for event in anonymous_client_peers
         if event.get("processID") != server_pid
     ]
+    all_server_activations = [
+        event for event in events if message(event) == "Activate Server"
+    ]
     server_activation = [
         event
-        for event in events
+        for event in all_server_activations
         if event.get("processID") == server_pid
-        and message(event) == "Activate Server"
     ]
     serving_chain = ordered_correlation(
         [anonymous_server_peer, server_activation]
     )
     serving_channel_observed = bool(server_pid and client_pid and serving_chain)
+    other_process_serving_channels: list[dict[str, Any]] = []
+    other_process_ids = sorted(
+        {
+            event.get("processID")
+            for event in anonymous_other_process_peers
+            if isinstance(event.get("processID"), int)
+        }
+    )
+    for process_id in other_process_ids:
+        process_peers = [
+            event
+            for event in anonymous_other_process_peers
+            if event.get("processID") == process_id
+        ]
+        process_activations = [
+            event
+            for event in all_server_activations
+            if event.get("processID") == process_id
+        ]
+        chain = ordered_correlation([process_peers, process_activations])
+        if chain:
+            other_process_serving_channels.append(
+                {
+                    "processID": process_id,
+                    "processImagePath": process_peers[0].get("processImagePath"),
+                    "orderedCorrelation": chain,
+                }
+            )
+    endpoint_observed_under_other_process = bool(
+        other_process_registration_chains or other_process_serving_channels
+    )
 
     request_peer_marker = (
         f"getxpcendpoint.peer[{client_pid}]" if client_pid else None
@@ -1378,10 +1449,10 @@ def parse_endpoint_evidence(
             connection_names.add(match.group(1))
     candidate_events = [
         *all_registration_services,
-        *registration_peer,
+        *all_registration_peers,
         *registration_receipt,
         *anonymous_client_peers,
-        *server_activation,
+        *all_server_activations,
         *request_peer,
         *request_receipt,
         *connection_name_refusal,
@@ -1412,6 +1483,9 @@ def parse_endpoint_evidence(
         client_pid and f".peer[{client_pid}]" in collection_predicate
     )
     launch_agent_coverage = 'process == "imklaunchagent"' in collection_predicate
+    other_process_activation_coverage = (
+        'eventMessage == "Activate Server"' in collection_predicate
+    )
     predicate_loss_not_supported = bool(
         collection_exit_ok
         and collection_not_truncated
@@ -1489,6 +1563,13 @@ def parse_endpoint_evidence(
             "anonymousExactClientPeersOwnedByOtherProcesses": [
                 retained(event) for event in anonymous_other_process_peers[:20]
             ],
+            "correlatedEndpointRegistrationChainsOwnedByOtherProcesses": (
+                other_process_registration_chains[:20]
+            ),
+            "correlatedExactClientServingChannelsOwnedByOtherProcesses": (
+                other_process_serving_channels[:20]
+            ),
+            "rawAnonymousPeersAreNotEndpointEvidenceWithoutIMKActivation": True,
             "alternativeProcessEventLimit": 20,
         },
         "collectionAssessment": {
@@ -1504,6 +1585,7 @@ def parse_endpoint_evidence(
                 "allExactServerRecords": exact_server_coverage,
                 "exactClientPeerMarkerAcrossProcesses": exact_client_peer_coverage,
                 "allLaunchAgentRecords": launch_agent_coverage,
+                "activationMarkerAcrossProcesses": other_process_activation_coverage,
             },
         },
         "internalIMKEndpointObserved": internal_endpoint_observed,
@@ -1528,7 +1610,7 @@ def parse_endpoint_evidence(
                     if internal_endpoint_observed
                     else (
                         "disconfirmed-only-outside-exact-server"
-                        if anonymous_other_process_peers
+                        if endpoint_observed_under_other_process
                         else "not-disconfirmed"
                     )
                 ),
@@ -1537,13 +1619,14 @@ def parse_endpoint_evidence(
             "endpointBelongedToAnotherProcess": {
                 "result": (
                     "also-observed"
-                    if internal_endpoint_observed and anonymous_other_process_peers
+                    if internal_endpoint_observed
+                    and endpoint_observed_under_other_process
                     else (
                         "disconfirmed"
                         if internal_endpoint_observed
                         else (
                             "supported"
-                            if anonymous_other_process_peers
+                            if endpoint_observed_under_other_process
                             else "not-disconfirmed"
                         )
                     )
@@ -1552,8 +1635,14 @@ def parse_endpoint_evidence(
                 "otherRegistrationServiceEventCount": len(
                     other_process_registration_services
                 ),
-                "otherAnonymousExactClientPeerEventCount": len(
+                "rawOtherProcessAnonymousExactClientPeerEventCount": len(
                     anonymous_other_process_peers
+                ),
+                "correlatedOtherProcessRegistrationChainCount": len(
+                    other_process_registration_chains
+                ),
+                "correlatedOtherProcessServingChannelCount": len(
+                    other_process_serving_channels
                 ),
             },
             "differentServiceOrName": {
@@ -1574,7 +1663,7 @@ def parse_endpoint_evidence(
                     else "not-disconfirmed"
                 ),
                 "observedCandidateSubsystems": candidate_subsystems,
-                "evidence": "candidate recognition uses exact process IDs and endpoint messages across subsystem values; the serving peer is an exact-server com.apple.xpc record and IMK activation has an empty subsystem",
+                "evidence": "candidate recognition uses exact process IDs and endpoint messages across subsystem values; a serving channel requires an anonymous exact-client peer and IMK activation owned by the same process",
             },
             "differentTopology": {
                 "result": (
@@ -1782,6 +1871,7 @@ def automatic_activation(
             'eventMessage CONTAINS[c] "setxpcendpoint"',
             'eventMessage CONTAINS[c] "getxpcendpoint"',
             'eventMessage CONTAINS[c] "InputMethodConnectionName"',
+            'eventMessage == "Activate Server"',
         ]
         if exact_pid is not None:
             endpoint_predicate_clauses.append(f"processID == {exact_pid}")
