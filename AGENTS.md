@@ -41,10 +41,17 @@ make coverage
 - Test diagnostics and coverage data are stored in `build/Test/Results/UnicornCoreTests.xcresult`. All test intermediates stay under the ignored `build/Test/` directory.
 - `make coverage` reruns the standard test path and prints a readable report from that `.xcresult` bundle.
 - `make build` performs a universal arm64 and x86_64 Release build by default and overrides Xcode signing with the ad-hoc identity `-`; override `ARCHS` to request different slices.
-- `make test-native`, `make test-summary`, `make build-universal`, and `make coverage-report` expose the reusable stages behind the standard targets.
+- `make test-native`, `make test-summary`, `make test-ci-summary`, `make build-universal`, and `make coverage-report` expose the reusable stages behind the standard targets.
 - `make install` builds, replaces the app in `~/Library/Input Methods/`, and registers it with Launch Services.
 
 The hostless suite uses Swift Testing for engine transitions, trie-backed lookup, candidates, history, limits, and presentation calculations.
+
+## Validation Maintenance Standard
+
+Keep the smallest recurring validation set that protects accepted behavior and realistic failure boundaries.
+Classify a check by the guarantee it protects and whether another retained check would catch the same regression, not by how frequently its implementation is expected to change.
+Prefer a few deterministic behavioral cases for critical success, failure, and output boundaries plus a real integration path over broad fixture duplication.
+Retain implementation experiments and manual observations as review evidence only when recurring automation would protect no unique guarantee.
 
 Core tests exercise the public engine manager seam but do not launch `unicorn.app`, an `IMKServer`, or the candidate panel. InputMethodKit lifecycle, marked-text behavior, candidate UI, and event handling in real clients require installing and enabling the input source and validating it in actual client applications. Universal compilation and hostless tests do not replace that end-to-end validation or validate the minimum supported macOS version.
 
