@@ -69,6 +69,9 @@ jobs:
     - name: Set up macOS toolchain
       uses: ./.github/actions/setup-macos
 
+    - name: Validate essential test-summary behavior
+      run: make --silent test-ci-summary
+
     - name: Run native tests and coverage
       run: scripts/ci/run-native-verification.sh coverage
 

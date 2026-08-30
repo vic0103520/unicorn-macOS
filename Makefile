@@ -39,7 +39,7 @@ INSTALL_DIR ?= $(HOME)/Library/Input Methods
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test test-native _test-native test-summary coverage coverage-report lint format
+.PHONY: test test-native _test-native test-summary test-ci-summary coverage coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -183,6 +183,9 @@ test-summary:
 	@scripts/ci/summarize-tests.py "$(TEST_RESULT_BUNDLE)" \
 		--configuration Debug \
 		$(if $(filter 1,$(NO_COLOR)),--no-color,)
+
+test-ci-summary:
+	@scripts/ci/test-summary-output.py
 
 coverage: test
 	+@$(MAKE) --no-print-directory coverage-report
