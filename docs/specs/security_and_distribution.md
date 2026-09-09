@@ -38,7 +38,7 @@ After confirmation, the script recursively removes `com.apple.quarantine` from t
 
 ### Pull-request CI
 
-For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs independent lint, native test and coverage, and universal Release verification jobs on hosted macOS. Sanitizer jobs run after the normal native tests pass.
+For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs independent lint, tests and coverage, and Release bundle verification jobs on hosted macOS. Sanitizer jobs run after the normal tests pass. A separate workflow tests summary output only when formatter-related files change.
 
 Pull-request CI does not run the installer, copy Unicorn into Input Methods, explicitly register it, activate it, or launch it. Xcode's incidental build-product registration is confined to the disposable runner and discarded when the runner is torn down.
 

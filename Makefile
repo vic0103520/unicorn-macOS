@@ -39,7 +39,7 @@ INSTALL_DIR ?= $(HOME)/Library/Input Methods
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test test-native _test-native test-summary test-ci-summary coverage coverage-report lint format
+.PHONY: test test-native _test-native test-summary test-summary-output coverage coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -175,7 +175,7 @@ _test-native:
 		:; \
 	else \
 		status=$$?; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " Native tests: arch=$(NATIVE_ARCH) exit=$$status"; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Tests: arch=$(NATIVE_ARCH) exit=$$status"; \
 		exit "$$status"; \
 	fi
 
@@ -184,7 +184,7 @@ test-summary:
 		--configuration Debug \
 		$(if $(filter 1,$(NO_COLOR)),--no-color,)
 
-test-ci-summary:
+test-summary-output:
 	@scripts/ci/test-summary-output.py
 
 coverage: test

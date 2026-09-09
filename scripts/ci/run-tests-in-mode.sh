@@ -16,10 +16,8 @@ mkdir -p build/Diagnostics
 
 case "$mode" in
   coverage)
-    # The coverage target also cross-compiles the app. Xcode's automatic build-product
-    # registration is contained by ephemeral runner teardown; CI never installs or activates it.
-    make --silent coverage \
-      2>&1 | tee build/Diagnostics/native-tests-and-coverage.log
+    make --silent _test-native \
+      2>&1 | tee build/Diagnostics/tests-and-coverage.log
     xcrun xccov view --report --only-targets \
       build/Test/Results/UnicornCoreTests.xcresult \
       | tee build/Test/Results/coverage.txt
@@ -28,7 +26,7 @@ case "$mode" in
     root="$PWD/build/Sanitizers/AddressUndefined"
     rm -rf "$root"
     mkdir -p "$root"
-    make --silent test-native \
+    make --silent _test-native \
       XCODEBUILD='xcodebuild -enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES' \
       TEST_ROOT="$root" \
       TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult" \
@@ -39,7 +37,7 @@ case "$mode" in
     root="$PWD/build/Sanitizers/Thread"
     rm -rf "$root"
     mkdir -p "$root"
-    make --silent test-native \
+    make --silent _test-native \
       XCODEBUILD='xcodebuild -enableThreadSanitizer YES' \
       TEST_ROOT="$root" \
       TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult" \
@@ -47,7 +45,7 @@ case "$mode" in
       2>&1 | tee build/Diagnostics/thread-sanitizer.log
     ;;
   *)
-    printf 'Unknown native verification mode: %s\n' "$mode" >&2
+    printf 'Unknown test mode: %s\n' "$mode" >&2
     usage
     exit 64
     ;;

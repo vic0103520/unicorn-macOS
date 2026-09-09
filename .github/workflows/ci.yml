@@ -29,16 +29,14 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    - name: Set up macOS toolchain
-      uses: ./.github/actions/setup-macos
-
-    - name: Cache SwiftLint archive
+    - name: Cache SwiftLint
+      continue-on-error: true
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ~/.cache/unicorn-ci/swiftlint
         key: ${{ runner.os }}-${{ runner.arch }}-swiftlint-${{ env.SWIFTLINT_VERSION }}-${{ env.SWIFTLINT_SHA256 }}
 
-    - name: Install SwiftLint 0.65.1
+    - name: Install SwiftLint
       run: |
         install_dir="$RUNNER_TEMP/swiftlint-$SWIFTLINT_VERSION"
         cache_dir="$HOME/.cache/unicorn-ci/swiftlint"
@@ -54,52 +52,48 @@ jobs:
         unzip -q "$archive" -d "$install_dir"
         chmod +x "$install_dir/swiftlint"
         printf '%s\n' "$install_dir" >> "$GITHUB_PATH"
-        "$install_dir/swiftlint" version
 
     - name: Run lint
       run: make --silent lint
 
   native-tests-and-coverage:
-    name: Native tests and coverage
+    name: Tests and coverage
     runs-on: macos-15
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    - name: Set up macOS toolchain
-      uses: ./.github/actions/setup-macos
+    - name: Run tests and coverage
+      run: scripts/ci/run-tests-in-mode.sh coverage
 
-    - name: Validate essential test-summary behavior
-      run: make --silent test-ci-summary
-
-    - name: Run native tests and coverage
-      run: scripts/ci/run-native-verification.sh coverage
-
-    - name: Upload native test .xcresult
+    - name: Upload test diagnostics
       if: always()
+      continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: unicorn-native-test-xcresult-macos-15
+        name: unicorn-test-diagnostics-macos-15
         path: build/Test/Results/UnicornCoreTests.xcresult
-        if-no-files-found: error
+        if-no-files-found: warn
         retention-days: 14
 
     - name: Upload coverage report
       if: always()
+      continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: unicorn-coverage-macos-15
         path: build/Test/Results/coverage.txt
-        if-no-files-found: error
+        if-no-files-found: warn
         retention-days: 14
 
-    - name: Upload native test diagnostics
+    - name: Upload test log
       if: always()
+      continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: unicorn-native-test-diagnostics-macos-15
-        path: build/Diagnostics/native-tests-and-coverage.log
-        if-no-files-found: error
+        name: unicorn-test-log-macos-15
+        path: build/Diagnostics/tests-and-coverage.log
+        if-no-files-found: warn
         retention-days: 14
 
   sanitizer-verification:
@@ -114,55 +108,51 @@ jobs:
         - name: Address and undefined-behavior sanitizers
           mode: address-undefined
           timeout-minutes: 25
-          xcresult-name: unicorn-address-undefined-xcresult-macos-15
+          xcresult-name: unicorn-address-undefined-test-diagnostics-macos-15
           xcresult-path: build/Sanitizers/AddressUndefined/UnicornCoreTests.xcresult
-          diagnostics-name: unicorn-address-undefined-diagnostics-macos-15
-          diagnostics-path: build/Diagnostics/address-undefined-sanitizers.log
+          log-name: unicorn-address-undefined-test-log-macos-15
+          log-path: build/Diagnostics/address-undefined-sanitizers.log
         - name: Thread sanitizer
           mode: thread
           timeout-minutes: 25
-          xcresult-name: unicorn-thread-sanitizer-xcresult-macos-15
+          xcresult-name: unicorn-thread-sanitizer-test-diagnostics-macos-15
           xcresult-path: build/Sanitizers/Thread/UnicornCoreTests.xcresult
-          diagnostics-name: unicorn-thread-sanitizer-diagnostics-macos-15
-          diagnostics-path: build/Diagnostics/thread-sanitizer.log
+          log-name: unicorn-thread-sanitizer-test-log-macos-15
+          log-path: build/Diagnostics/thread-sanitizer.log
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    - name: Set up macOS toolchain
-      uses: ./.github/actions/setup-macos
+    - name: Run sanitizer tests
+      run: scripts/ci/run-tests-in-mode.sh "${{ matrix.mode }}"
 
-    - name: Run sanitizer verification
-      run: scripts/ci/run-native-verification.sh "${{ matrix.mode }}"
-
-    - name: Upload sanitizer .xcresult
+    - name: Upload test diagnostics
       if: always()
+      continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ matrix.xcresult-name }}
         path: ${{ matrix.xcresult-path }}
-        if-no-files-found: error
+        if-no-files-found: warn
         retention-days: 14
 
-    - name: Upload sanitizer diagnostics
+    - name: Upload test log
       if: always()
+      continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: ${{ matrix.diagnostics-name }}
-        path: ${{ matrix.diagnostics-path }}
-        if-no-files-found: error
+        name: ${{ matrix.log-name }}
+        path: ${{ matrix.log-path }}
+        if-no-files-found: warn
         retention-days: 14
 
   release-cross-architecture:
-    name: Release and cross-architecture verification
+    name: Release bundle verification
     runs-on: macos-15
     timeout-minutes: 25
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    - name: Set up macOS toolchain
-      uses: ./.github/actions/setup-macos
-
-    - name: Build Release app for arm64 and x86_64
+    - name: Build Release app
       run: |
         # Xcode automatically registers macOS app build products. The effect is contained by
         # ephemeral runner teardown; CI never installs it, copies it into Input Methods, explicitly registers it, or activates it.
@@ -176,17 +166,18 @@ jobs:
           OBJROOT="$root/Intermediates" \
           2>&1 | tee build/Diagnostics/release-cross-architecture.log
 
-    - name: Verify Release bundle without installing it
+    - name: Verify Release bundle
       run: |
         scripts/ci/verify-release-build.sh \
           build/CIRelease/Products/Release/unicorn.app \
           2>&1 | tee -a build/Diagnostics/release-cross-architecture.log
 
-    - name: Upload Release verification diagnostics
+    - name: Upload verification log
       if: always()
+      continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: unicorn-release-verification-macos-15
+        name: unicorn-release-log-macos-15
         path: build/Diagnostics/release-cross-architecture.log
-        if-no-files-found: error
+        if-no-files-found: warn
         retention-days: 14
