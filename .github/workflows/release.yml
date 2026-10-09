@@ -4,97 +4,167 @@ on:
   push:
     tags:
       - 'v*'
-      - 'test-*'
+      - 'test-v*'
 
-permissions:
-  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: macos-latest
-    outputs:
-      tag: ${{ github.ref_name }}
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_BUILD_NUMBER: ${{ github.run_number }}
     steps:
-    - uses: actions/checkout@v4
+    - name: Check out the tagged source
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-    - name: Build
+    - name: Validate release version contract
       run: |
-        make build
-        # Create a clean dist directory
-        mkdir dist
-        # Copy the built app and the installer script
-        cp -R "build/Release/unicorn.app" dist/
-        cp "install.sh" dist/
-        # Generate SHA256 checksum of the main binary for release notes
-        echo "SHA256 Checksum (unicorn.app/Contents/MacOS/unicorn):"
-        shasum -a 256 "dist/unicorn.app/Contents/MacOS/unicorn" | awk '{print $1}' > dist/checksum.txt
-        cat dist/checksum.txt
+        set -euo pipefail
+        marketing_version="$(./scripts/release-version.sh "$RELEASE_TAG")"
+        case "$RELEASE_BUILD_NUMBER" in
+          ''|0|*[!0-9]*)
+            echo "Invalid GitHub Actions run number: $RELEASE_BUILD_NUMBER" >&2
+            exit 1
+            ;;
+        esac
+        echo "RELEASE_MARKETING_VERSION=$marketing_version" >> "$GITHUB_ENV"
+        printf 'Release contract: tag=%s marketing-version=%s build-number=%s\n' \
+          "$RELEASE_TAG" "$marketing_version" "$RELEASE_BUILD_NUMBER"
 
-    - name: Archive
+    - name: Run release and installer regression tests
       run: |
-        cd dist
-        zip -r unicorn-macos.zip .
+        set -euo pipefail
+        make test-scripts
 
-    - name: Create Release (Draft)
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          dist/unicorn-macos.zip
-          dist/checksum.txt
-        generate_release_notes: true
-        draft: true
-        fail_on_unresolved_errors: false
-        body: |
-          ## Integrity Verification
-          Please verify the SHA256 checksum of the 'unicorn' binary before trusting it:
-          $(cat dist/checksum.txt)
+    - name: Build and package final release bytes
+      run: |
+        set -euo pipefail
+        make release-artifacts \
+          TAG="$RELEASE_TAG" \
+          MARKETING_VERSION="$RELEASE_MARKETING_VERSION" \
+          BUILD_NUMBER="$RELEASE_BUILD_NUMBER" \
+          DIST_DIR=dist
 
-  verify:
-    needs: release
-    runs-on: macos-latest
-    steps:
-    - name: Download Release from GitHub
+    - name: Create complete draft release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        # Wait for GitHub to index the release
-        sleep 15
-        gh release download ${{ github.ref_name }} --repo ${{ github.repository }} --pattern "unicorn-macos.zip"
+        set -euo pipefail
+        if existing_draft="$(gh release view "$RELEASE_TAG" \
+          --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)"; then
+          if [ "$existing_draft" != true ]; then
+            echo "Refusing to reuse published production tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          gh release delete "$RELEASE_TAG" --yes --repo "$GITHUB_REPOSITORY"
+        fi
+        gh release create "$RELEASE_TAG" \
+          --repo "$GITHUB_REPOSITORY" \
+          --verify-tag \
+          --draft \
+          --title "Unicorn $RELEASE_MARKETING_VERSION" \
+          --notes-file dist/RELEASE_NOTES.md \
+          dist/unicorn-macos.zip \
+          dist/SHA256SUMS \
+          dist/UNICORN_EXECUTABLE_SHA256
 
-    - name: Verify Release Artifact
+    - name: Download and verify exact draft assets
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        # Create a clean test environment
-        mkdir test_install
-        unzip unicorn-macos.zip -d test_install
-        cd test_install
-        
-        # Simulate a download by adding the quarantine attribute
-        xattr -w com.apple.quarantine "0081;66000000;Safari;" unicorn.app
-        
-        # Run the bundled installer (simulating user input 'y')
-        echo "y" | sh install.sh
-        
-        # Final validation: Ensure the attribute is removed and app is moved
-        if xattr "$HOME/Library/Input Methods/unicorn.app" | grep -q "com.apple.quarantine"; then
-          echo "Verification Failed: Quarantine attribute was not removed."
+        set -euo pipefail
+        actual_tag="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+        actual_title="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name --jq .name)"
+        actual_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+        [ "$actual_tag" = "$RELEASE_TAG" ]
+        [ "$actual_title" = "Unicorn $RELEASE_MARKETING_VERSION" ]
+        [ "$actual_draft" = true ]
+
+        printf '%s\n' SHA256SUMS UNICORN_EXECUTABLE_SHA256 unicorn-macos.zip | LC_ALL=C sort > expected-assets.txt
+        gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+          --json assets --jq '.assets[].name' | LC_ALL=C sort > actual-assets.txt
+        cmp expected-assets.txt actual-assets.txt
+
+        rm -rf downloaded-release extracted-release
+        mkdir downloaded-release
+        gh release download "$RELEASE_TAG" \
+          --repo "$GITHUB_REPOSITORY" \
+          --dir downloaded-release \
+          --pattern unicorn-macos.zip \
+          --pattern SHA256SUMS \
+          --pattern UNICORN_EXECUTABLE_SHA256
+        cmp dist/unicorn-macos.zip downloaded-release/unicorn-macos.zip
+        cmp dist/SHA256SUMS downloaded-release/SHA256SUMS
+        cmp dist/UNICORN_EXECUTABLE_SHA256 downloaded-release/UNICORN_EXECUTABLE_SHA256
+
+        gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > downloaded-release/RELEASE_BODY.md
+        ./scripts/verify-release.sh \
+          "$RELEASE_TAG" \
+          "$RELEASE_BUILD_NUMBER" \
+          downloaded-release \
+          extracted-release \
+          downloaded-release/RELEASE_BODY.md
+
+    - name: Install the verified downloaded bytes in isolation
+      run: |
+        set -euo pipefail
+        isolated_home="$RUNNER_TEMP/unicorn-release-home"
+        install_dir="$isolated_home/Library/Input Methods"
+        rm -rf "$isolated_home"
+        mkdir -p "$isolated_home"
+        xattr -w com.apple.quarantine '0081;66000000;Safari;' extracted-release/unicorn.app
+        HOME="$isolated_home" \
+          UNICORN_INSTALL_DIR="$install_dir" \
+          UNICORN_ASSUME_YES=1 \
+          /bin/sh extracted-release/install.sh
+        installed_app="$install_dir/unicorn.app"
+        [ "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$installed_app/Contents/Info.plist")" = "$RELEASE_MARKETING_VERSION" ]
+        [ "$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$installed_app/Contents/Info.plist")" = "$RELEASE_BUILD_NUMBER" ]
+        if xattr -r "$installed_app" 2>/dev/null | grep -Fq com.apple.quarantine; then
+          echo 'Installed app retained the quarantine attribute.' >&2
           exit 1
         fi
-        echo "Verification Success: Release artifact is valid and installable."
+        echo "Verified downloaded release installed in isolation: $installed_app"
 
-    - name: Publish Release
-      if: "startsWith(github.ref_name, 'v') && success()"
+    - name: Publish verified production release
+      if: startsWith(github.ref_name, 'v')
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        gh release edit ${{ github.ref_name }} --draft=false --repo ${{ github.repository }}
+        set -euo pipefail
+        gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+        published_tag="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+        published_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+        [ "$published_tag" = "$RELEASE_TAG" ]
+        [ "$published_draft" = false ]
+        echo "Published verified release: $RELEASE_TAG"
 
-    - name: Cleanup Test Release
-      if: "startsWith(github.ref_name, 'test-') && always()"
+    - name: Clean up unpublished test release
+      if: startsWith(github.ref_name, 'test-v') && always()
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        echo "Auto-cleaning test release: ${{ github.ref_name }}"
-        # Delete the draft release
-        gh release delete ${{ github.ref_name }} --yes --repo ${{ github.repository }} || true
-        # Delete the remote tag using the GitHub API (doesn't require local .git)
-        gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/${{ github.ref_name }} || true
+        set -euo pipefail
+        release_error="$(mktemp)"
+        if is_draft="$(gh api "/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq .draft 2>"$release_error")"; then
+          [ "$is_draft" = true ] || { echo "Refusing to delete a published test release" >&2; exit 1; }
+          gh release delete "$RELEASE_TAG" --yes --repo "$GITHUB_REPOSITORY"
+        elif ! grep -Fq '(HTTP 404)' "$release_error"; then
+          cat "$release_error" >&2
+          exit 1
+        fi
+
+        ref_error="$(mktemp)"
+        if gh api "/repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>"$ref_error"; then
+          gh api --method DELETE "/repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG"
+        elif ! grep -Fq '(HTTP 404)' "$ref_error"; then
+          cat "$ref_error" >&2
+          exit 1
+        fi
+        rm -f "$release_error" "$ref_error"
+        echo "Unpublished test release and tag are absent: $RELEASE_TAG"
