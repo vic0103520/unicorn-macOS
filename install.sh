@@ -483,11 +483,21 @@ if [ "$BACKUP_CREATED" -eq 1 ]; then
     terminate_old_processes "$BACKUP_PATH/Contents/MacOS/unicorn"
 fi
 
-INSTALL_COMMITTED=1
 if [ "$BACKUP_CREATED" -eq 1 ]; then
-    "$REMOVE_COMMAND" -rf "$BACKUP_PATH" || fail "installation succeeded but backup cleanup failed: $BACKUP_PATH"
-    BACKUP_CREATED=0
+    if "$REMOVE_COMMAND" -rf "$BACKUP_PATH"; then
+        BACKUP_CREATED=0
+    elif validate_app "$BACKUP_PATH" '' ''; then
+        fail "unable to remove the preserved backup; restoring the previous installation"
+    else
+        INSTALL_COMMITTED=1
+        BACKUP_CREATED=0
+        if path_exists "$BACKUP_PATH"; then
+            fail "backup cleanup partially removed the previous app; the validated new installation remains active; the incomplete backup remains at $BACKUP_PATH"
+        fi
+        fail "backup cleanup removed the previous app but returned failure; the validated new installation remains active and no rollback backup remains"
+    fi
 fi
+INSTALL_COMMITTED=1
 path_exists "$STAGE_PATH" && fail "installation staging path still exists"
 path_exists "$BACKUP_PATH" && fail "installation backup path still exists"
 "$REMOVE_COMMAND" -rf "$LOCK_PATH" || fail "installation succeeded but lock cleanup failed: $LOCK_PATH"

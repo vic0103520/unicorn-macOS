@@ -257,6 +257,60 @@ assert_installed_version "$TAMPER_DESTINATION" 1.0.0
 assert_transaction_clean "$TAMPER_DESTINATION"
 pass 'candidate tampering is rejected before destination changes'
 
+FAILING_BACKUP_CLEANUP="$WORK_DIR/fail backup cleanup"
+cat > "$FAILING_BACKUP_CLEANUP" <<'EOF'
+#!/bin/sh
+set -eu
+case ${2:-} in
+    */.unicorn.app.install-backup)
+        if [ "${UNICORN_TEST_BACKUP_CLEANUP_MODE:-}" = partial ]; then
+            /bin/rm -f "$2/Contents/Resources/keymap.json"
+        fi
+        exit 47
+        ;;
+esac
+exec /bin/rm "$@"
+EOF
+/bin/chmod 755 "$FAILING_BACKUP_CLEANUP"
+
+BACKUP_CLEANUP_DISTRIBUTION=$(new_distribution 'backup cleanup failure')
+BACKUP_CLEANUP_DESTINATION=$(new_destination 'backup cleanup failure')
+install_old_app "$BACKUP_CLEANUP_DESTINATION"
+BACKUP_CLEANUP_OUTPUT="$WORK_DIR/backup cleanup failure/output"
+if run_installer "$BACKUP_CLEANUP_DISTRIBUTION" "$BACKUP_CLEANUP_DESTINATION" "$BACKUP_CLEANUP_OUTPUT" \
+    UNICORN_REMOVE_COMMAND="$FAILING_BACKUP_CLEANUP"; then
+    fail_test 'backup cleanup failure unexpectedly succeeded'
+fi
+assert_not_contains "$BACKUP_CLEANUP_OUTPUT" 'Success:'
+assert_contains "$BACKUP_CLEANUP_OUTPUT" 'unable to remove the preserved backup; restoring the previous installation'
+assert_contains "$BACKUP_CLEANUP_OUTPUT" 'Previous Unicorn installation restored.'
+assert_installed_version "$BACKUP_CLEANUP_DESTINATION" 1.0.0
+assert_transaction_clean "$BACKUP_CLEANUP_DESTINATION"
+pass 'intact backup cleanup failure restores the previous installation'
+
+PARTIAL_CLEANUP_DISTRIBUTION=$(new_distribution 'partial backup cleanup failure')
+PARTIAL_CLEANUP_DESTINATION=$(new_destination 'partial backup cleanup failure')
+install_old_app "$PARTIAL_CLEANUP_DESTINATION"
+PARTIAL_CLEANUP_OUTPUT="$WORK_DIR/partial backup cleanup failure/output"
+if run_installer "$PARTIAL_CLEANUP_DISTRIBUTION" "$PARTIAL_CLEANUP_DESTINATION" "$PARTIAL_CLEANUP_OUTPUT" \
+    UNICORN_REMOVE_COMMAND="$FAILING_BACKUP_CLEANUP" \
+    UNICORN_TEST_BACKUP_CLEANUP_MODE=partial; then
+    fail_test 'partial backup cleanup failure unexpectedly succeeded'
+fi
+assert_not_contains "$PARTIAL_CLEANUP_OUTPUT" 'Success:'
+assert_contains "$PARTIAL_CLEANUP_OUTPUT" \
+    'backup cleanup partially removed the previous app; the validated new installation remains active'
+assert_installed_version "$PARTIAL_CLEANUP_DESTINATION" 2.0.0
+/usr/bin/codesign --verify --deep --strict "$PARTIAL_CLEANUP_DESTINATION/unicorn.app" >/dev/null 2>&1 || \
+    fail_test 'new installation became invalid after partial backup cleanup'
+assert_not_exists "$PARTIAL_CLEANUP_DESTINATION/.unicorn.app.install-staging"
+assert_not_exists "$PARTIAL_CLEANUP_DESTINATION/.unicorn.app.install-lock"
+[ -d "$PARTIAL_CLEANUP_DESTINATION/.unicorn.app.install-backup" ] || \
+    fail_test 'partially removed backup was not retained for inspection'
+[ ! -e "$PARTIAL_CLEANUP_DESTINATION/.unicorn.app.install-backup/Contents/Resources/keymap.json" ] || \
+    fail_test 'partial backup cleanup fault did not remove the expected resource'
+pass 'partial backup cleanup retains the valid new installation and reports recovery state'
+
 FAILING_LOCK_CLEANUP="$WORK_DIR/fail lock cleanup"
 cat > "$FAILING_LOCK_CLEANUP" <<'EOF'
 #!/bin/sh
