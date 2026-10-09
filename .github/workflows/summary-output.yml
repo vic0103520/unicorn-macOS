@@ -1,0 +1,27 @@
+name: Summary output
+
+on:
+  pull_request:
+    branches: [ "main" ]
+    paths:
+    - .github/workflows/summary-output.yml
+    - scripts/ci/summarize-tests.py
+    - scripts/ci/test-summary-output.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Test summary output
+      run: scripts/ci/test-summary-output.py
