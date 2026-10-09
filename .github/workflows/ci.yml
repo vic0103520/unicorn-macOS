@@ -181,3 +181,29 @@ jobs:
         path: build/Diagnostics/release-cross-architecture.log
         if-no-files-found: warn
         retention-days: 14
+
+  build-and-test:
+    name: build-and-test
+    if: ${{ always() }}
+    needs:
+    - lint
+    - native-tests-and-coverage
+    - sanitizer-verification
+    - release-cross-architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Require successful product checks
+      env:
+        LINT_RESULT: ${{ needs.lint.result }}
+        TEST_RESULT: ${{ needs.native-tests-and-coverage.result }}
+        SANITIZER_RESULT: ${{ needs.sanitizer-verification.result }}
+        RELEASE_RESULT: ${{ needs.release-cross-architecture.result }}
+      run: |
+        scripts/ci/require-successful-checks.py \
+          "lint=$LINT_RESULT" \
+          "tests-and-coverage=$TEST_RESULT" \
+          "sanitizers=$SANITIZER_RESULT" \
+          "release-bundle=$RELEASE_RESULT"
