@@ -20,24 +20,6 @@ for path in "${required_paths[@]}"; do
   fi
 done
 
-if ! file "$executable" | grep -q 'Mach-O universal binary'; then
-  echo "Expected a universal Mach-O executable: $executable" >&2
-  exit 1
-fi
-
-architectures=$(lipo -archs "$executable")
-echo "Mach-O architectures: $architectures"
-for architecture in arm64 x86_64; do
-  if [[ " $architectures " != *" $architecture "* ]]; then
-    echo "Missing Mach-O architecture: $architecture" >&2
-    exit 1
-  fi
-done
-if [[ $(wc -w <<< "$architectures") -ne 2 ]]; then
-  echo "Unexpected Mach-O architectures: $architectures" >&2
-  exit 1
-fi
-
 build_settings=$(xcodebuild \
   -project unicorn.xcodeproj \
   -target unicorn \

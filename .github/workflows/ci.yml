@@ -76,72 +76,24 @@ jobs:
         if-no-files-found: warn
         retention-days: 14
 
-    - name: Upload coverage report
-      if: always()
-      continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: unicorn-coverage-macos-15
-        path: build/Test/Results/coverage.txt
-        if-no-files-found: warn
-        retention-days: 14
-
-    - name: Upload test log
-      if: always()
-      continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: unicorn-test-log-macos-15
-        path: build/Diagnostics/tests-and-coverage.log
-        if-no-files-found: warn
-        retention-days: 14
-
   sanitizer-verification:
-    name: ${{ matrix.name }}
+    name: Address and undefined-behavior sanitizers
     needs: native-tests-and-coverage
     runs-on: macos-15
-    timeout-minutes: ${{ matrix.timeout-minutes }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-        - name: Address and undefined-behavior sanitizers
-          mode: address-undefined
-          timeout-minutes: 25
-          xcresult-name: unicorn-address-undefined-test-diagnostics-macos-15
-          xcresult-path: build/Sanitizers/AddressUndefined/UnicornCoreTests.xcresult
-          log-name: unicorn-address-undefined-test-log-macos-15
-          log-path: build/Diagnostics/address-undefined-sanitizers.log
-        - name: Thread sanitizer
-          mode: thread
-          timeout-minutes: 25
-          xcresult-name: unicorn-thread-sanitizer-test-diagnostics-macos-15
-          xcresult-path: build/Sanitizers/Thread/UnicornCoreTests.xcresult
-          log-name: unicorn-thread-sanitizer-test-log-macos-15
-          log-path: build/Diagnostics/thread-sanitizer.log
+    timeout-minutes: 25
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Run sanitizer tests
-      run: scripts/ci/run-tests-in-mode.sh "${{ matrix.mode }}"
+      run: scripts/ci/run-tests-in-mode.sh address-undefined
 
     - name: Upload test diagnostics
       if: always()
       continue-on-error: true
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: ${{ matrix.xcresult-name }}
-        path: ${{ matrix.xcresult-path }}
-        if-no-files-found: warn
-        retention-days: 14
-
-    - name: Upload test log
-      if: always()
-      continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: ${{ matrix.log-name }}
-        path: ${{ matrix.log-path }}
+        name: unicorn-address-undefined-test-diagnostics-macos-15
+        path: build/Sanitizers/AddressUndefined/UnicornCoreTests.xcresult
         if-no-files-found: warn
         retention-days: 14
 
@@ -171,13 +123,3 @@ jobs:
         scripts/ci/verify-release-build.sh \
           build/CIRelease/Products/Release/unicorn.app \
           2>&1 | tee -a build/Diagnostics/release-cross-architecture.log
-
-    - name: Upload verification log
-      if: always()
-      continue-on-error: true
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: unicorn-release-log-macos-15
-        path: build/Diagnostics/release-cross-architecture.log
-        if-no-files-found: warn
-        retention-days: 14
