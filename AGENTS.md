@@ -46,6 +46,10 @@ make coverage
 
 The hostless suite uses Swift Testing for engine transitions, trie-backed lookup, candidates, history, limits, and presentation calculations.
 
+## Pull-request Validation
+
+The pull-request workflow validates Unicorn behavior, implementation quality, and Release bundle properties. Tests of CI reporting, formatter presentation, and workflow plumbing do not belong in pull-request CI.
+
 Core tests exercise the public engine manager seam but do not launch `unicorn.app`, an `IMKServer`, or the candidate panel. InputMethodKit lifecycle, marked-text behavior, candidate UI, and event handling in real clients require installing and enabling the input source and validating it in actual client applications. Universal compilation and hostless tests do not replace that end-to-end validation or validate the minimum supported macOS version.
 
 Release targets (`release`, `test-release`, `re-release`, and `clean-test-releases`) mutate local and remote Git or GitHub state. Inspect their definitions in the Makefile and use them only with explicit release intent.

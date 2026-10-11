@@ -38,7 +38,9 @@ After confirmation, the script recursively removes `com.apple.quarantine` from t
 
 ### Pull-request CI
 
-For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) installs SwiftLint, runs `make lint`, runs `make test`, and runs `make install`. The install target builds, copies the app into the runner user's input-method directory, and registers it with Launch Services.
+For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs independent lint, tests with coverage collection, and Release bundle verification jobs on hosted macOS. AddressSanitizer and UndefinedBehaviorSanitizer run after the normal tests pass. Coverage rendering is diagnostic and does not determine whether tests pass.
+
+Pull-request CI does not run the installer, copy Unicorn into Input Methods, explicitly register it, activate it, or launch it. Xcode's incidental build-product registration is confined to the disposable runner and discarded when the runner is torn down.
 
 ### Tagged releases
 
