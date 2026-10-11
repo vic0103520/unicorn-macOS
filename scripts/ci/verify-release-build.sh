@@ -8,7 +8,6 @@ info_plist="$app_bundle/Contents/Info.plist"
 required_paths=(
   "$executable"
   "$info_plist"
-  "$app_bundle/Contents/PkgInfo"
   "$app_bundle/Contents/Resources/keymap.json"
   "$app_bundle/Contents/Resources/Base.lproj/Main.storyboardc/Info.plist"
   "$app_bundle/Contents/Resources/en.lproj/InfoPlist.strings"
