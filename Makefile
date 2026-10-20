@@ -6,7 +6,7 @@ XCODE_PROJECT ?= $(APP_NAME).xcodeproj
 XCODE_SCHEME ?= $(APP_NAME)
 BUILD_DIR ?= build
 CONFIG ?= Release
-ARCHS ?= arm64 x86_64
+ARCH ?= $(shell uname -m)
 VERBOSE ?= 0
 NO_COLOR ?= 0
 
@@ -21,7 +21,6 @@ XCODE_SIGNING_ARGS = \
 
 PASS_LABEL = $(if $(filter 1,$(NO_COLOR)),[PASS],\033[1;32m[PASS]\033[0m)
 FAIL_LABEL = $(if $(filter 1,$(NO_COLOR)),[FAIL],\033[1;31m[FAIL]\033[0m)
-RESULT_LABEL = $(if $(filter 1,$(NO_COLOR)),[RESULT],\033[1;36m[RESULT]\033[0m)
 
 define BENCHMARK_FAILURE
 if [ -t 1 ] && [ -z "$${CI+x}" ] && [ -z "$${NO_COLOR+x}" ]; then \
@@ -37,26 +36,31 @@ NATIVE_ARCH ?= $(shell uname -m)
 TEST_ROOT ?= $(SYMROOT)/Test
 TEST_DERIVED_DATA ?= $(TEST_ROOT)/DerivedData
 TEST_RESULT_BUNDLE ?= $(TEST_ROOT)/Results/UnicornCoreTests.xcresult
-TEST_APP_SYMROOT ?= $(TEST_ROOT)/UniversalBuildProducts
-TEST_APP_OBJROOT ?= $(TEST_ROOT)/UniversalBuildIntermediates
+TEST_APP_SYMROOT ?= $(TEST_ROOT)/AppBuildProducts
+TEST_APP_OBJROOT ?= $(TEST_ROOT)/AppBuildIntermediates
 BENCHMARK_SCHEME ?= UnicornCorePerformanceTests
 BENCHMARK_ROOT ?= $(SYMROOT)/Benchmark
 BENCHMARK_DERIVED_DATA ?= $(BENCHMARK_ROOT)/DerivedData
 BENCHMARK_RESULT_BUNDLE ?= $(BENCHMARK_ROOT)/Results/UnicornCorePerformanceTests.xcresult
+BENCHMARK_PROVENANCE ?= $(BENCHMARK_RESULT_BUNDLE).provenance.json
 BENCHMARK_SUMMARY_DIR ?= $(BENCHMARK_ROOT)/Summary
 BENCHMARK_XCODE_SUMMARY ?= $(BENCHMARK_SUMMARY_DIR)/xcode-test-summary.json
 BENCHMARK_XCODE_METRICS ?= $(BENCHMARK_SUMMARY_DIR)/xcode-performance-metrics.json
 BENCHMARK_SUMMARY ?= $(BENCHMARK_SUMMARY_DIR)/benchmark-summary.json
+BENCHMARK_KEYMAP ?= unicorn/keymap.json
 APP_BUNDLE ?= $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 APP_EXECUTABLE ?= $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 INSTALL_DIR ?= $(HOME)/Library/Input Methods
+
+SUPPORTED_ARCHES = arm64 x86_64 universal
+BUILD_ARCHS = $(if $(filter universal,$(ARCH)),arm64 x86_64,$(ARCH))
 
 # Automatically detect the GitHub repository name (e.g., owner/repo)
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test test-native test-summary benchmark benchmark-native benchmark-summary benchmark-report-test
-.PHONY: coverage coverage-report lint format
+.PHONY: test _test test-summary benchmark benchmark-native benchmark-summary benchmark-report-test
+.PHONY: coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -116,32 +120,40 @@ lint:
 format:
 	swiftlint --fix
 
-build: build-universal
-
-build-universal:
+# Build the app. Usage: make build [CONFIG=Debug|Release] [ARCH=arm64|x86_64|universal]
+build:
+	@if [[ " $(SUPPORTED_ARCHES) " != *" $(ARCH) "* ]]; then \
+		printf 'Unsupported ARCH: %s (expected arm64, x86_64, or universal)\n' "$(ARCH)" >&2; \
+		exit 64; \
+	fi
 	@if $(XCODEBUILD_COMMAND) $(XCODE_PROJECT_ARGS) \
 		-configuration "$(CONFIG)" \
 		-destination 'generic/platform=macOS' \
 		SYMROOT="$(SYMROOT)" \
 		OBJROOT="$(OBJROOT)" \
-		ARCHS="$(ARCHS)" \
+		ARCHS="$(BUILD_ARCHS)" \
 		ONLY_ACTIVE_ARCH=NO \
 		$(XCODE_SIGNING_ARGS); then \
 		:; \
 	else \
 		status=$$?; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " App build: configuration=$(CONFIG) archs=$(ARCHS) exit=$$status"; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " App build: configuration=$(CONFIG) archs=$(BUILD_ARCHS) exit=$$status"; \
 		exit "$$status"; \
 	fi
-	@if /usr/bin/lipo "$(APP_EXECUTABLE)" -verify_arch $(ARCHS); then \
-		printf '%b%s\n' "$(PASS_LABEL)" " App build: configuration=$(CONFIG) archs=$(ARCHS) path=$(APP_BUNDLE)"; \
+	@if xcrun lipo "$(APP_EXECUTABLE)" -verify_arch $(BUILD_ARCHS); then \
+		printf '%b%s\n' "$(PASS_LABEL)" " App build: configuration=$(CONFIG) archs=$(BUILD_ARCHS) path=$(APP_BUNDLE)"; \
 	else \
 		status=$$?; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " App architecture verification: archs=$(ARCHS) path=$(APP_EXECUTABLE) exit=$$status"; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " App architecture verification: archs=$(BUILD_ARCHS) path=$(APP_EXECUTABLE) exit=$$status"; \
 		exit "$$status"; \
 	fi
 
+# Compatibility alias. Usage: make build-universal [CONFIG=Debug|Release]
+build-universal:
+	+@$(MAKE) --no-print-directory build CONFIG="$(CONFIG)" ARCH=universal
+
 # Install the Input Method to the user's Library
+install: ARCH = universal
 install: build
 	pkill -f $(APP_NAME) || true
 	mkdir -p "$(INSTALL_DIR)"
@@ -155,15 +167,31 @@ install: build
 clean:
 	rm -rf "$(BUILD_DIR)"
 
-test: test-native
-	+@$(MAKE) --no-print-directory build-universal \
-		CONFIG=Debug \
-		ARCHS="$(ARCHS)" \
-		SYMROOT="$(TEST_APP_SYMROOT)" \
-		OBJROOT="$(TEST_APP_OBJROOT)"
+# Regular local verification. Usage: make test
+# Runs core tests, builds a native Debug app, and reports available test results.
+test:
+	+@test_status=0; build_status=0; summary_status=0; \
+	$(MAKE) --no-print-directory _test || test_status=$$?; \
+	if [ "$$test_status" -eq 0 ]; then \
+		$(MAKE) --no-print-directory build \
+			CONFIG=Debug \
+			ARCH="$(NATIVE_ARCH)" \
+			SYMROOT="$(TEST_APP_SYMROOT)" \
+			OBJROOT="$(TEST_APP_OBJROOT)" || build_status=$$?; \
+	fi; \
+	if [ -d "$(TEST_RESULT_BUNDLE)" ]; then \
+		$(MAKE) --no-print-directory test-summary || summary_status=$$?; \
+	fi; \
+	if [ "$$summary_status" -ne 0 ]; then \
+		printf 'Warning: test result reporting failed with exit %s\n' "$$summary_status" >&2; \
+	fi; \
+	[ "$$test_status" -eq 0 ] || exit "$$test_status"; \
+	[ "$$build_status" -eq 0 ] || exit "$$build_status"; \
+	exit 0
 
-test-native:
-	@echo "Running UnicornCore tests on $(NATIVE_ARCH)..."
+# Core test execution only. Usage: make _test [TEST_ROOT=path]
+_test:
+	@printf 'Testing UnicornCore: arch=%s configuration=Debug\n' "$(NATIVE_ARCH)"
 	@rm -rf "$(TEST_ROOT)"
 	@if $(XCODEBUILD_COMMAND) clean test $(XCODE_PROJECT_ARGS) \
 		-configuration Debug \
@@ -177,41 +205,44 @@ test-native:
 		:; \
 	else \
 		status=$$?; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " Native tests: arch=$(NATIVE_ARCH) exit=$$status"; \
+		printf '%b%s\n' "$(FAIL_LABEL)" " Tests: arch=$(NATIVE_ARCH) exit=$$status"; \
 		exit "$$status"; \
 	fi
-	+@$(MAKE) --no-print-directory test-summary
 
+# Report an existing result bundle. Usage: make test-summary [TEST_RESULT_BUNDLE=path]
 test-summary:
-	@summary_file="$$(mktemp)" || { printf '%b%s\n' "$(FAIL_LABEL)" " Test summary: unable to create temporary file"; exit 1; }; \
-	trap 'rm -f "$$summary_file"' EXIT; \
-	if xcrun xcresulttool get test-results summary --path "$(TEST_RESULT_BUNDLE)" > "$$summary_file" && \
-		result="$$(/usr/bin/plutil -extract result raw -o - "$$summary_file")" && \
-		passed="$$(/usr/bin/plutil -extract passedTests raw -o - "$$summary_file")" && \
-		failed="$$(/usr/bin/plutil -extract failedTests raw -o - "$$summary_file")" && \
-		skipped="$$(/usr/bin/plutil -extract skippedTests raw -o - "$$summary_file")"; then \
-		if [ "$$result" = "Passed" ] && [ "$$failed" -eq 0 ]; then \
-			printf '%b%s\n' "$(PASS_LABEL)" " Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
-		else \
-			printf '%b%s\n' "$(FAIL_LABEL)" " Tests: result=$$result passed=$$passed failed=$$failed skipped=$$skipped"; \
-			exit 1; \
-		fi; \
-	else \
-		status=$$?; \
-		printf '%b%s\n' "$(FAIL_LABEL)" " Test summary: xcresult=$(TEST_RESULT_BUNDLE) exit=$$status"; \
-		exit "$$status"; \
-	fi
-	@printf '%b%s\n' "$(RESULT_LABEL)" " xcresult: path=$(TEST_RESULT_BUNDLE)"
+	@scripts/ci/summarize-tests.py "$(TEST_RESULT_BUNDLE)" \
+		--configuration Debug \
+		$(if $(filter 1,$(NO_COLOR)),--no-color,)
 
 benchmark: benchmark-native
 
 benchmark-native:
 	@echo "Running UnicornCore benchmarks in Release on $(NATIVE_ARCH)..."
 	@rm -rf "$(BENCHMARK_ROOT)"
-	@rm -f "$(BENCHMARK_XCODE_SUMMARY)" "$(BENCHMARK_XCODE_METRICS)" "$(BENCHMARK_SUMMARY)"
-	@mkdir -p "$(dir $(BENCHMARK_RESULT_BUNDLE))" "$(BENCHMARK_SUMMARY_DIR)"
+	@rm -f "$(BENCHMARK_PROVENANCE)" \
+		"$(BENCHMARK_XCODE_SUMMARY)" \
+		"$(BENCHMARK_XCODE_METRICS)" \
+		"$(BENCHMARK_SUMMARY)"
+	@mkdir -p "$(dir $(BENCHMARK_RESULT_BUNDLE))" \
+		"$(dir $(BENCHMARK_PROVENANCE))" \
+		"$(BENCHMARK_SUMMARY_DIR)"
 	@test ! -e "$(BENCHMARK_RESULT_BUNDLE)" || \
 		{ $(call BENCHMARK_FAILURE,Refusing stale benchmark result: path=$(BENCHMARK_RESULT_BUNDLE)); exit 1; }
+	@provenance_tmp="$(BENCHMARK_PROVENANCE).tmp"; \
+	trap 'rm -f "$$provenance_tmp"' EXIT; \
+	rm -f "$$provenance_tmp"; \
+	if python3 scripts/benchmark_report.py \
+		--capture-provenance \
+		--keymap "$(BENCHMARK_KEYMAP)" \
+		--output "$$provenance_tmp" && \
+		mv "$$provenance_tmp" "$(BENCHMARK_PROVENANCE)"; then \
+		:; \
+	else \
+		status=$$?; \
+		$(call BENCHMARK_FAILURE,Benchmark provenance: output=$(BENCHMARK_PROVENANCE) exit=$$status); \
+		exit "$$status"; \
+	fi
 	@build_log="$$(mktemp)" || \
 		{ $(call BENCHMARK_FAILURE,Core benchmarks: unable to create temporary build log); exit 1; }; \
 	trap 'rm -f "$$build_log"' EXIT; \
@@ -248,41 +279,50 @@ benchmark-summary:
 		"$(dir $(BENCHMARK_SUMMARY))"
 	@summary_tmp="$(BENCHMARK_XCODE_SUMMARY).tmp"; \
 	metrics_tmp="$(BENCHMARK_XCODE_METRICS).tmp"; \
-	trap 'rm -f "$$summary_tmp" "$$metrics_tmp"' EXIT; \
+	report_tmp="$(BENCHMARK_SUMMARY).tmp"; \
+	trap 'rm -f "$$summary_tmp" "$$metrics_tmp" "$$report_tmp"' EXIT; \
+	rm -f "$(BENCHMARK_XCODE_SUMMARY)" \
+		"$(BENCHMARK_XCODE_METRICS)" \
+		"$(BENCHMARK_SUMMARY)" \
+		"$$summary_tmp" "$$metrics_tmp" "$$report_tmp"; \
 	if xcrun xcresulttool get test-results summary \
 		--path "$(BENCHMARK_RESULT_BUNDLE)" --compact > "$$summary_tmp" && \
 		xcrun xcresulttool get test-results metrics \
 		--path "$(BENCHMARK_RESULT_BUNDLE)" --compact > "$$metrics_tmp"; then \
-		mv "$$summary_tmp" "$(BENCHMARK_XCODE_SUMMARY)"; \
-		mv "$$metrics_tmp" "$(BENCHMARK_XCODE_METRICS)"; \
+		:; \
 	else \
 		status=$$?; \
 		$(call BENCHMARK_FAILURE,Benchmark summary export: xcresult=$(BENCHMARK_RESULT_BUNDLE) exit=$$status); \
 		exit "$$status"; \
-	fi
-	@report_tmp="$(BENCHMARK_SUMMARY).tmp"; \
-	trap 'rm -f "$$report_tmp"' EXIT; \
-	rm -f "$$report_tmp" "$(BENCHMARK_SUMMARY)"; \
+	fi; \
 	if python3 scripts/benchmark_report.py \
-		--keymap unicorn/keymap.json \
-		--test-summary "$(BENCHMARK_XCODE_SUMMARY)" \
-		--metrics "$(BENCHMARK_XCODE_METRICS)" \
+		--provenance "$(BENCHMARK_PROVENANCE)" \
+		--test-summary "$$summary_tmp" \
+		--metrics "$$metrics_tmp" \
 		--output "$$report_tmp" \
-		--artifact-path "$(BENCHMARK_ROOT)" && \
-		mv "$$report_tmp" "$(BENCHMARK_SUMMARY)"; then \
+		--artifact-path "$(BENCHMARK_ROOT)"; then \
 		:; \
 	else \
 		status=$$?; \
 		$(call BENCHMARK_FAILURE,Benchmark report: output=$(BENCHMARK_SUMMARY) exit=$$status); \
+		exit "$$status"; \
+	fi; \
+	if mv "$$summary_tmp" "$(BENCHMARK_XCODE_SUMMARY)" && \
+		mv "$$metrics_tmp" "$(BENCHMARK_XCODE_METRICS)" && \
+		mv "$$report_tmp" "$(BENCHMARK_SUMMARY)"; then \
+		:; \
+	else \
+		status=$$?; \
+		rm -f "$(BENCHMARK_XCODE_SUMMARY)" \
+			"$(BENCHMARK_XCODE_METRICS)" \
+			"$(BENCHMARK_SUMMARY)"; \
+		$(call BENCHMARK_FAILURE,Benchmark summary publication: output=$(BENCHMARK_SUMMARY_DIR) exit=$$status); \
 		exit "$$status"; \
 	fi
 
 benchmark-report-test:
 	@python3 scripts/test_benchmark_report.py
 
-coverage: test
-	+@$(MAKE) --no-print-directory coverage-report
-
+# Show detailed coverage from existing results. Usage: make coverage-report [TEST_RESULT_BUNDLE=path]
 coverage-report:
-	@printf '%b%s\n' "$(RESULT_LABEL)" " UnicornCore coverage: xcresult=$(TEST_RESULT_BUNDLE)"
-	@xcrun xccov view --report --only-targets "$(TEST_RESULT_BUNDLE)"
+	@xcrun xccov view --report "$(TEST_RESULT_BUNDLE)"

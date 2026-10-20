@@ -10,7 +10,7 @@ These facts describe the checked-in app. They do not remove the inherent risk of
 
 ## Signing and Published Artifact Evidence
 
-The documented `make build` command overrides Xcode's signing identity with `-`, producing an ad-hoc signature. The tagged-release workflow uses that command.
+The documented `make build` command overrides Xcode's signing identity with `-`, producing an ad-hoc signature. The tagged-release workflow uses `make build ARCH=universal` to build both supported slices.
 
 The published v0.1.2 artifact provides a concrete snapshot of current distribution behavior:
 
@@ -38,13 +38,15 @@ After confirmation, the script recursively removes `com.apple.quarantine` from t
 
 ### Pull-request CI
 
-For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) installs SwiftLint, runs `make lint`, runs `make test`, and runs `make install`. The install target builds, copies the app into the runner user's input-method directory, and registers it with Launch Services.
+For pull requests targeting `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs independent lint, tests with coverage collection, and Release bundle verification jobs on hosted macOS. AddressSanitizer and UndefinedBehaviorSanitizer run after the normal tests pass. Coverage rendering is diagnostic and does not determine whether tests pass.
+
+Pull-request CI does not run the installer, copy Unicorn into Input Methods, explicitly register it, activate it, or launch it. Xcode's incidental build-product registration is confined to the disposable runner and discarded when the runner is torn down.
 
 ### Tagged releases
 
 Tags matching `v*` or `test-*` trigger [`.github/workflows/release.yml`](../../.github/workflows/release.yml). The workflow:
 
-1. builds with `make build`;
+1. builds with `make build ARCH=universal`;
 2. packages the app, installer, and executable checksum in `unicorn-macos.zip`;
 3. uploads the archive and `checksum.txt` to a draft GitHub release;
 4. downloads the archive in a separate job, adds a quarantine attribute, runs the bundled installer with confirmation, and verifies that quarantine is absent from the installed app;

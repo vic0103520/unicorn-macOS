@@ -19,7 +19,7 @@ jobs:
 
     - name: Build
       run: |
-        make build
+        make build ARCH=universal
         # Create a clean dist directory
         mkdir dist
         # Copy the built app and the installer script
