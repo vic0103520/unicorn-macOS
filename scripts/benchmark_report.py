@@ -178,10 +178,10 @@ def render_human_summary(
     failed = test_summary["failedTests"]
     skipped = test_summary["skippedTests"]
     total = test_summary["totalTestCount"]
-    status = "PASS" if benchmark_passed(report) else "FAIL"
+    status = "COMPLETE" if benchmark_passed(report) else "FAIL"
 
     title = styled("UNICORN BENCHMARKS", ANSI_CYAN, use_color)
-    status_color = ANSI_GREEN if status == "PASS" else ANSI_RED
+    status_color = ANSI_GREEN if status == "COMPLETE" else ANSI_RED
     counts = f"passed={passed} failed={failed} skipped={skipped} total={total}"
     result = styled(f"{status}  {counts}", status_color, use_color)
     configuration = (

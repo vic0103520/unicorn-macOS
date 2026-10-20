@@ -301,7 +301,7 @@ fi
                 self.assertNotIn("routine xcodebuild", result.stdout)
                 self.assertEqual(
                     result.stdout.count(
-                        "UNICORN BENCHMARKS  PASS  "
+                        "UNICORN BENCHMARKS  COMPLETE  "
                         "passed=7 failed=0 skipped=0 total=7"
                     ),
                     1,

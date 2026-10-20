@@ -49,7 +49,7 @@ All generated files stay under the ignored `build/Benchmark/` directory:
 The context records production keymap byte count and SHA-256, native architecture, macOS product and build versions, Xcode version and build, Swift version, Release configuration, measurement iterations, and synthetic-fixture dimensions. The concise terminal report shows batch-average wall-clock and CPU time, peak memory for selected workloads, and wall-clock relative standard deviation as variation:
 
 ```text
-UNICORN BENCHMARKS  PASS  passed=7 failed=0 skipped=0 total=7
+UNICORN BENCHMARKS  COMPLETE  passed=7 failed=0 skipped=0 total=7
 Release · arm64 · 5 iterations
 
 WORKLOAD                                      WALL        CPU   PEAK MEMORY   VARIATION
@@ -76,4 +76,4 @@ For a local comparison:
 4. Save each `build/Benchmark/Summary/benchmark-summary.json` outside `build/` before the next run deletes it.
 5. Compare all raw samples and relative standard deviations. Investigate a consistent shift across repeated runs, not one outlier or one shared-runner result.
 
-There are no blocking numeric thresholds in this suite. A PASS requires all seven workloads to pass and every required metric to contain five samples. Failed XCTest runs may still show the metrics collected before failure, but a compile failure, XCTest failure, invariant failure, incomplete measurement set, result-export failure, or report-generation failure makes `make benchmark` fail. Numeric regression gates should be added only after repeated variance evidence exists on a stable dedicated host. The benchmark is intentionally absent from ordinary pull-request CI until that evidence and host exist.
+There are no blocking numeric thresholds in this suite. COMPLETE means all seven workloads passed and every required metric contains five samples. Failed XCTest runs may still show the metrics collected before failure, but a compile failure, XCTest failure, invariant failure, incomplete measurement set, result-export failure, or report-generation failure makes `make benchmark` fail. Numeric regression gates should be added only after repeated variance evidence exists on a stable dedicated host. The benchmark is intentionally absent from ordinary pull-request CI until that evidence and host exist.
