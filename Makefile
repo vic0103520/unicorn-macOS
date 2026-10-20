@@ -29,8 +29,6 @@ NATIVE_ARCH ?= $(shell uname -m)
 TEST_ROOT ?= $(SYMROOT)/Test
 TEST_DERIVED_DATA ?= $(TEST_ROOT)/DerivedData
 TEST_RESULT_BUNDLE ?= $(TEST_ROOT)/Results/UnicornCoreTests.xcresult
-TEST_APP_SYMROOT ?= $(TEST_ROOT)/UniversalBuildProducts
-TEST_APP_OBJROOT ?= $(TEST_ROOT)/UniversalBuildIntermediates
 APP_BUNDLE ?= $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 APP_EXECUTABLE ?= $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 INSTALL_DIR ?= $(HOME)/Library/Input Methods
@@ -39,7 +37,7 @@ INSTALL_DIR ?= $(HOME)/Library/Input Methods
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test test-native _test-native test-summary coverage coverage-report lint format
+.PHONY: test test-summary coverage coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -139,28 +137,6 @@ clean:
 	rm -rf "$(BUILD_DIR)"
 
 test:
-	+@test_status=0; build_status=0; summary_status=0; \
-	$(MAKE) --no-print-directory _test-native || test_status=$$?; \
-	if [ "$$test_status" -eq 0 ]; then \
-		$(MAKE) --no-print-directory build-universal \
-			CONFIG=Debug \
-			ARCHS="$(ARCHS)" \
-			SYMROOT="$(TEST_APP_SYMROOT)" \
-			OBJROOT="$(TEST_APP_OBJROOT)" || build_status=$$?; \
-	fi; \
-	$(MAKE) --no-print-directory test-summary || summary_status=$$?; \
-	[ "$$test_status" -eq 0 ] || exit "$$test_status"; \
-	[ "$$build_status" -eq 0 ] || exit "$$build_status"; \
-	exit "$$summary_status"
-
-test-native:
-	+@test_status=0; summary_status=0; \
-	$(MAKE) --no-print-directory _test-native || test_status=$$?; \
-	$(MAKE) --no-print-directory test-summary || summary_status=$$?; \
-	[ "$$test_status" -eq 0 ] || exit "$$test_status"; \
-	exit "$$summary_status"
-
-_test-native:
 	@printf 'Testing UnicornCore: arch=%s configuration=Debug\n' "$(NATIVE_ARCH)"
 	@rm -rf "$(TEST_ROOT)"
 	@if $(XCODEBUILD_COMMAND) clean test $(XCODE_PROJECT_ARGS) \

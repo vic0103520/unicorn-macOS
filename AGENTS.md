@@ -37,11 +37,11 @@ make install
 make coverage
 ```
 
-- `make test` runs the hostless `UnicornCoreTests` bundle on the host architecture with coverage enabled, then builds a Debug app for arm64 and x86_64 and verifies both slices with `lipo`. Only the host-architecture tests execute.
+- `make test` runs only the hostless `UnicornCoreTests` bundle on the host architecture with coverage collection enabled.
 - Test diagnostics and coverage data are stored in `build/Test/Results/UnicornCoreTests.xcresult`. All test intermediates stay under the ignored `build/Test/` directory.
 - `make coverage` reruns the standard test path and prints a readable report from that `.xcresult` bundle.
 - `make build` performs a universal arm64 and x86_64 Release build by default and overrides Xcode signing with the ad-hoc identity `-`; override `ARCHS` to request different slices.
-- `make test-native`, `make test-summary`, `make build-universal`, and `make coverage-report` expose the reusable stages behind the standard targets.
+- `make test-summary`, `make build-universal`, and `make coverage-report` are separate reporting and build operations.
 - `make install` builds, replaces the app in `~/Library/Input Methods/`, and registers it with Launch Services.
 
 The hostless suite uses Swift Testing for engine transitions, trie-backed lookup, candidates, history, limits, and presentation calculations.
