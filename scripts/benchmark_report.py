@@ -7,6 +7,7 @@ import json
 import math
 import os
 import platform
+import re
 import statistics
 import subprocess
 import sys
@@ -23,6 +24,9 @@ ANSI_RESET = "\033[0m"
 WALL_METRIC = "com.apple.dt.XCTMetric_Clock.time.monotonic"
 CPU_METRIC = "com.apple.dt.XCTMetric_CPU.time"
 MEMORY_METRIC = "com.apple.dt.XCTMetric_Memory.physical_peak"
+
+PROVENANCE_SCHEMA_VERSION = 1
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 WORKLOADS = {
     "testInMemoryInitializationFromProductionKeymap": (
@@ -80,6 +84,76 @@ def version_context() -> dict:
         },
         "swiftVersion": command_output("xcrun", "swift", "--version"),
     }
+
+
+def keymap_context(keymap_path: Path) -> dict:
+    keymap_data = keymap_path.read_bytes()
+    return {
+        "path": str(keymap_path),
+        "byteCount": len(keymap_data),
+        "sha256": hashlib.sha256(keymap_data).hexdigest(),
+    }
+
+
+def captured_provenance(keymap_path: Path) -> dict:
+    context = version_context()
+    context["productionKeymap"] = keymap_context(keymap_path)
+    return {
+        "schemaVersion": PROVENANCE_SCHEMA_VERSION,
+        "context": context,
+    }
+
+
+def require_nonempty_string(value, field: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} must be a nonempty string")
+
+
+def validated_provenance(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("document must be an object")
+    if value.get("schemaVersion") != PROVENANCE_SCHEMA_VERSION:
+        raise ValueError(
+            f"schemaVersion must be {PROVENANCE_SCHEMA_VERSION}"
+        )
+
+    context = value.get("context")
+    if not isinstance(context, dict):
+        raise ValueError("context must be an object")
+
+    require_nonempty_string(context.get("hostArchitecture"), "hostArchitecture")
+    require_nonempty_string(context.get("swiftVersion"), "swiftVersion")
+
+    for group_name, fields in {
+        "macOS": ("productName", "productVersion", "buildVersion"),
+        "xcode": ("version", "buildVersion"),
+    }.items():
+        group = context.get(group_name)
+        if not isinstance(group, dict):
+            raise ValueError(f"{group_name} must be an object")
+        for field in fields:
+            require_nonempty_string(group.get(field), f"{group_name}.{field}")
+
+    keymap = context.get("productionKeymap")
+    if not isinstance(keymap, dict):
+        raise ValueError("productionKeymap must be an object")
+    require_nonempty_string(keymap.get("path"), "productionKeymap.path")
+    byte_count = keymap.get("byteCount")
+    if isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 0:
+        raise ValueError("productionKeymap.byteCount must be a nonnegative integer")
+    digest = keymap.get("sha256")
+    if not isinstance(digest, str) or not SHA256_PATTERN.fullmatch(digest):
+        raise ValueError("productionKeymap.sha256 must be a lowercase SHA-256 digest")
+
+    return context
+
+
+def load_provenance(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(str(error)) from error
+    return validated_provenance(value)
 
 
 def metric_summary(metric: dict) -> dict:
@@ -261,21 +335,47 @@ def print_human_summary(report: dict, artifact_path: str) -> None:
     )
 
 
+def required_argument(parser, arguments, name: str) -> str:
+    value = getattr(arguments, name)
+    if value is None:
+        parser.error(f"--{name.replace('_', '-')} is required")
+    return value
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--keymap", required=True)
-    parser.add_argument("--test-summary", required=True)
-    parser.add_argument("--metrics", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--artifact-path", required=True)
+    parser.add_argument("--capture-provenance", action="store_true")
+    parser.add_argument("--keymap")
+    parser.add_argument("--provenance")
+    parser.add_argument("--test-summary")
+    parser.add_argument("--metrics")
+    parser.add_argument("--output")
+    parser.add_argument("--artifact-path")
     arguments = parser.parse_args()
 
-    keymap_path = Path(arguments.keymap)
-    keymap_data = keymap_path.read_bytes()
-    test_summary = json.loads(Path(arguments.test_summary).read_text())
-    metrics = json.loads(Path(arguments.metrics).read_text())
+    output_path = Path(required_argument(parser, arguments, "output"))
+    if arguments.capture_provenance:
+        keymap_path = Path(required_argument(parser, arguments, "keymap"))
+        output_path.write_text(
+            json.dumps(captured_provenance(keymap_path), indent=2, sort_keys=True)
+            + "\n"
+        )
+        return
 
-    context = version_context()
+    provenance_path = Path(required_argument(parser, arguments, "provenance"))
+    test_summary_path = Path(required_argument(parser, arguments, "test_summary"))
+    metrics_path = Path(required_argument(parser, arguments, "metrics"))
+    artifact_path = required_argument(parser, arguments, "artifact_path")
+
+    try:
+        context = dict(load_provenance(provenance_path))
+    except ValueError as error:
+        print(f"Invalid benchmark provenance: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+    test_summary = json.loads(test_summary_path.read_text())
+    metrics = json.loads(metrics_path.read_text())
+
     context.update(
         {
             "configuration": "Release",
@@ -289,11 +389,6 @@ def main() -> None:
                 "accumulatingCompositionCycles": 50,
                 "historyPressureCycles": 500,
                 "candidateNavigationCycles": 5_000,
-            },
-            "productionKeymap": {
-                "path": str(keymap_path),
-                "byteCount": len(keymap_data),
-                "sha256": hashlib.sha256(keymap_data).hexdigest(),
             },
             "syntheticHistoryFixture": {
                 "jsonByteCount": 30,
@@ -327,9 +422,8 @@ def main() -> None:
         "performanceTests": performance_tests,
         "blockingNumericThresholds": False,
     }
-    output_path = Path(arguments.output)
     output_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    print_human_summary(report, arguments.artifact_path)
+    print_human_summary(report, artifact_path)
     if test_summary["result"] == "Passed" and not benchmark_passed(report):
         print("Benchmark measurements are incomplete.", file=sys.stderr)
         raise SystemExit(1)

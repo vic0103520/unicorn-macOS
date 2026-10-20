@@ -2,6 +2,7 @@
 """Focused tests for benchmark terminal report rendering."""
 
 import errno
+import hashlib
 import json
 import os
 import pty
@@ -155,9 +156,11 @@ class BenchmarkMakeTests(unittest.TestCase):
         self.xcodebuild.write_text(
             """#!/bin/sh
 first_argument=${1:-}
-if [ \"${FAIL_BENCHMARK_REPORT:-0}\" = 1 ] && [ \"$first_argument\" = -version ]; then
-    echo 'benchmark report context failure' >&2
-    exit 43
+if [ "$first_argument" = -version ]; then
+    printf 'Xcode %s\nBuild version %s\n' \
+        "${CAPTURED_XCODE_VERSION:-Test}" \
+        "${CAPTURED_XCODE_BUILD:-TESTBUILD}"
+    exit 0
 fi
 result_bundle=
 is_test=0
@@ -203,16 +206,19 @@ echo 'routine xcodebuild diagnostic' >&2
         metrics_json = json.dumps(metrics_export, separators=(",", ":"))
         (self.tools / "xcrun").write_text(
             """#!/bin/sh
-if [ \"$1\" = swift ]; then
-    echo 'Swift version test'
-elif [ \"$4\" = summary ]; then
+if [ "$1" = swift ]; then
+    printf '%s\n' "${CAPTURED_SWIFT_VERSION:-Swift version test}"
+elif [ "$4" = summary ]; then
     if [ \"${FAILED_XCRESULT:-0}\" = 1 ]; then
         printf '%s\\n' '{"result":"Failed","passedTests":6,"failedTests":1,"skippedTests":0,"totalTestCount":7}'
     else
         printf '%s\\n' '{"result":"Passed","passedTests":7,"failedTests":0,"skippedTests":0,"totalTestCount":7}'
     fi
-elif [ \"$4\" = metrics ]; then
-    if [ \"${INCOMPLETE_METRICS:-0}\" = 1 ]; then
+elif [ "$4" = metrics ]; then
+    if [ "${FAIL_XCRESULT_EXPORT:-0}" = 1 ]; then
+        echo 'metrics export failure' >&2
+        exit 44
+    elif [ "${INCOMPLETE_METRICS:-0}" = 1 ]; then
         printf '%s\\n' '[]'
     else
         printf '%s\\n' '"""
@@ -225,8 +231,46 @@ else
 fi
 """
         )
-        for tool in (self.xcodebuild, self.tools / "xcrun"):
+        (self.tools / "sw_vers").write_text(
+            """#!/bin/sh
+case "$1" in
+    -productName) printf '%s\n' "${CAPTURED_PRODUCT_NAME:-macOS Test}" ;;
+    -productVersion) printf '%s\n' "${CAPTURED_PRODUCT_VERSION:-1.0}" ;;
+    -buildVersion) printf '%s\n' "${CAPTURED_OS_BUILD:-TESTOS}" ;;
+    *) exit 1 ;;
+esac
+"""
+        )
+        for tool in (self.xcodebuild, self.tools / "xcrun", self.tools / "sw_vers"):
             tool.chmod(0o755)
+
+    def write_provenance(self, path: Path, keymap: bytes = b"test keymap") -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "context": {
+                        "hostArchitecture": "arm64",
+                        "macOS": {
+                            "productName": "macOS Test",
+                            "productVersion": "1.0",
+                            "buildVersion": "TESTOS",
+                        },
+                        "xcode": {
+                            "version": "Xcode Test",
+                            "buildVersion": "Build version TESTBUILD",
+                        },
+                        "swiftVersion": "Swift version test",
+                        "productionKeymap": {
+                            "path": "captured-keymap.json",
+                            "byteCount": len(keymap),
+                            "sha256": hashlib.sha256(keymap).hexdigest(),
+                        },
+                    },
+                }
+            )
+        )
 
     def run_make(
         self,
@@ -235,8 +279,18 @@ fi
         interactive: bool = False,
         environment_updates=None,
         make_variables=None,
+        provide_provenance: bool = True,
     ) -> subprocess.CompletedProcess:
+        make_variables = make_variables or []
         benchmark_root = Path(self.temporary_directory.name) / target
+        provenance = benchmark_root / "captured-provenance.json"
+        for variable in make_variables:
+            if variable.startswith("BENCHMARK_ROOT="):
+                benchmark_root = Path(variable.split("=", maxsplit=1)[1])
+            elif variable.startswith("BENCHMARK_PROVENANCE="):
+                provenance = Path(variable.split("=", maxsplit=1)[1])
+        if provide_provenance and not provenance.exists():
+            self.write_provenance(provenance)
         environment = dict(os.environ)
         environment.pop("CI", None)
         environment.pop("NO_COLOR", None)
@@ -250,9 +304,10 @@ fi
             target,
             f"XCODEBUILD={self.xcodebuild}",
             f"BENCHMARK_ROOT={benchmark_root}",
+            f"BENCHMARK_PROVENANCE={provenance}",
             "NATIVE_ARCH=arm64",
         ]
-        command.extend(make_variables or [])
+        command.extend(make_variables)
         if not interactive:
             return subprocess.run(
                 command,
@@ -314,6 +369,16 @@ fi
                     / "Summary/benchmark-summary.json"
                 )
                 self.assertTrue(summary.is_file())
+                provenance = (
+                    Path(self.temporary_directory.name)
+                    / target
+                    / "captured-provenance.json"
+                )
+                self.assertTrue(provenance.is_file())
+                self.assertIn(
+                    "productionKeymap",
+                    json.loads(provenance.read_text())["context"],
+                )
 
     def test_passed_xctest_with_incomplete_metrics_fails_report(self) -> None:
         result = self.run_make(
@@ -357,33 +422,180 @@ fi
         self.assertTrue(xcode_metrics.is_file())
         self.assertTrue(benchmark_summary.is_file())
 
-    def test_failed_standalone_summary_does_not_leave_stale_report(self) -> None:
-        root = Path(self.temporary_directory.name) / "failed-standalone"
-        result_bundle = root / "existing/Benchmark.xcresult"
-        result_bundle.mkdir(parents=True)
-        xcode_summary = root / "exports/xcode-summary.json"
-        xcode_metrics = root / "exports/xcode-metrics.json"
-        benchmark_summary = root / "reports/benchmark-summary.json"
-        benchmark_summary.parent.mkdir(parents=True)
-        benchmark_summary.write_text("stale report\n")
+    def test_failed_export_removes_all_stale_final_artifacts(self) -> None:
+        root = Path(self.temporary_directory.name) / "failed-export"
+        outputs = [
+            root / "exports/xcode-summary.json",
+            root / "exports/xcode-metrics.json",
+            root / "reports/benchmark-summary.json",
+        ]
+        for output in outputs:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("stale artifact\n")
 
         result = self.run_make(
             "benchmark-summary",
-            environment_updates={"FAIL_BENCHMARK_REPORT": "1"},
+            environment_updates={"FAIL_XCRESULT_EXPORT": "1"},
             make_variables=[
-                f"BENCHMARK_RESULT_BUNDLE={result_bundle}",
-                f"BENCHMARK_XCODE_SUMMARY={xcode_summary}",
-                f"BENCHMARK_XCODE_METRICS={xcode_metrics}",
-                f"BENCHMARK_SUMMARY={benchmark_summary}",
+                f"BENCHMARK_XCODE_SUMMARY={outputs[0]}",
+                f"BENCHMARK_XCODE_METRICS={outputs[1]}",
+                f"BENCHMARK_SUMMARY={outputs[2]}",
             ],
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("[FAIL] Benchmark report:", result.stdout)
-        self.assertTrue(xcode_summary.is_file())
-        self.assertTrue(xcode_metrics.is_file())
-        self.assertFalse(benchmark_summary.exists())
-        self.assertFalse(Path(f"{benchmark_summary}.tmp").exists())
+        self.assertIn("metrics export failure", result.stdout)
+        self.assertIn("[FAIL] Benchmark summary export:", result.stdout)
+        for output in outputs:
+            self.assertFalse(output.exists())
+            self.assertFalse(Path(f"{output}.tmp").exists())
+
+    def test_success_atomically_replaces_all_final_artifacts(self) -> None:
+        root = Path(self.temporary_directory.name) / "successful-export"
+        outputs = [
+            root / "exports/xcode-summary.json",
+            root / "exports/xcode-metrics.json",
+            root / "reports/benchmark-summary.json",
+        ]
+        for output in outputs:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("stale artifact\n")
+
+        result = self.run_make(
+            "benchmark-summary",
+            make_variables=[
+                f"BENCHMARK_XCODE_SUMMARY={outputs[0]}",
+                f"BENCHMARK_XCODE_METRICS={outputs[1]}",
+                f"BENCHMARK_SUMMARY={outputs[2]}",
+            ],
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(json.loads(outputs[0].read_text())["result"], "Passed")
+        self.assertEqual(len(json.loads(outputs[1].read_text())), 7)
+        self.assertEqual(json.loads(outputs[2].read_text())["schemaVersion"], 1)
+        for output in outputs:
+            self.assertNotEqual(output.read_text(), "stale artifact\n")
+            self.assertFalse(Path(f"{output}.tmp").exists())
+
+    def test_missing_provenance_fails_and_removes_final_artifacts(self) -> None:
+        root = Path(self.temporary_directory.name) / "missing-provenance"
+        provenance = root / "missing.json"
+        outputs = [root / "summary.json", root / "metrics.json", root / "report.json"]
+        for output in outputs:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("stale artifact\n")
+
+        result = self.run_make(
+            "benchmark-summary",
+            provide_provenance=False,
+            make_variables=[
+                f"BENCHMARK_PROVENANCE={provenance}",
+                f"BENCHMARK_XCODE_SUMMARY={outputs[0]}",
+                f"BENCHMARK_XCODE_METRICS={outputs[1]}",
+                f"BENCHMARK_SUMMARY={outputs[2]}",
+            ],
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid benchmark provenance:", result.stdout)
+        for output in outputs:
+            self.assertFalse(output.exists())
+
+    def test_malformed_provenance_fails_and_removes_final_artifacts(self) -> None:
+        root = Path(self.temporary_directory.name) / "malformed-provenance"
+        provenance = root / "malformed.json"
+        provenance.parent.mkdir(parents=True)
+        provenance.write_text('{"schemaVersion":1,"context":{}}')
+        outputs = [root / "summary.json", root / "metrics.json", root / "report.json"]
+        for output in outputs:
+            output.write_text("stale artifact\n")
+
+        result = self.run_make(
+            "benchmark-summary",
+            provide_provenance=False,
+            make_variables=[
+                f"BENCHMARK_PROVENANCE={provenance}",
+                f"BENCHMARK_XCODE_SUMMARY={outputs[0]}",
+                f"BENCHMARK_XCODE_METRICS={outputs[1]}",
+                f"BENCHMARK_SUMMARY={outputs[2]}",
+            ],
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("hostArchitecture must be a nonempty string", result.stdout)
+        for output in outputs:
+            self.assertFalse(output.exists())
+
+    def test_regeneration_uses_captured_keymap_and_system_provenance(self) -> None:
+        root = Path(self.temporary_directory.name) / "immutable-provenance"
+        provenance = root / "results/run.provenance.json"
+        keymap = Path(self.temporary_directory.name) / "immutable-keymap.json"
+        keymap.parent.mkdir(parents=True, exist_ok=True)
+        measured_keymap = b'{"measured":true}'
+        keymap.write_bytes(measured_keymap)
+        provenance.parent.mkdir(parents=True)
+        variables = [
+            f"BENCHMARK_ROOT={root}",
+            f"BENCHMARK_PROVENANCE={provenance}",
+        ]
+        measured_environment = {
+            "CAPTURED_XCODE_VERSION": "Measured-16.1",
+            "CAPTURED_XCODE_BUILD": "MeasuredBuild",
+            "CAPTURED_SWIFT_VERSION": "Measured Swift",
+            "CAPTURED_PRODUCT_VERSION": "15.1",
+            "CAPTURED_OS_BUILD": "MeasuredOSBuild",
+        }
+
+        environment = dict(os.environ)
+        environment["PATH"] = f"{self.tools}:{environment['PATH']}"
+        environment.update(measured_environment)
+        captured_result = subprocess.run(
+            [
+                "python3",
+                "scripts/benchmark_report.py",
+                "--capture-provenance",
+                "--keymap",
+                str(keymap),
+                "--output",
+                str(provenance),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(captured_result.returncode, 0, captured_result.stdout)
+        captured = json.loads(provenance.read_text())["context"]
+
+        keymap.write_bytes(b'{"workspace":"changed"}')
+        regenerated = self.run_make(
+            "benchmark-summary",
+            environment_updates={
+                "CAPTURED_XCODE_VERSION": "Changed-99",
+                "CAPTURED_XCODE_BUILD": "ChangedBuild",
+                "CAPTURED_SWIFT_VERSION": "Changed Swift",
+                "CAPTURED_PRODUCT_VERSION": "99.0",
+                "CAPTURED_OS_BUILD": "ChangedOSBuild",
+            },
+            make_variables=variables,
+        )
+
+        self.assertEqual(regenerated.returncode, 0, regenerated.stdout)
+        report = json.loads((root / "Summary/benchmark-summary.json").read_text())
+        self.assertEqual(report["context"]["xcode"], captured["xcode"])
+        self.assertEqual(report["context"]["macOS"], captured["macOS"])
+        self.assertEqual(report["context"]["swiftVersion"], captured["swiftVersion"])
+        self.assertEqual(
+            report["context"]["productionKeymap"],
+            {
+                "path": str(keymap),
+                "byteCount": len(measured_keymap),
+                "sha256": hashlib.sha256(measured_keymap).hexdigest(),
+            },
+        )
 
     def test_benchmark_failure_replays_actionable_build_output(self) -> None:
         result = self.run_make("benchmark-native", fail=True)
@@ -456,6 +668,32 @@ fi
                 self.assertEqual(plain.returncode, 2)
                 self.assertIn("[FAIL] Core benchmarks", plain.stdout)
                 self.assertNotIn("\033[", plain.stdout)
+
+
+class MainBehaviorPreservationTests(unittest.TestCase):
+    def test_standard_test_keeps_main_reporting_and_native_app_build(self) -> None:
+        makefile = (Path(__file__).resolve().parents[1] / "Makefile").read_text()
+        test_recipe = makefile.split("\ntest:\n", maxsplit=1)[1].split(
+            "\n# Core test execution", maxsplit=1
+        )[0]
+
+        self.assertIn('ARCH="$(NATIVE_ARCH)"', test_recipe)
+        self.assertIn("summary_status=0", test_recipe)
+        self.assertIn("Warning: test result reporting failed", test_recipe)
+        self.assertIn('[ "$$test_status" -eq 0 ] || exit "$$test_status"', test_recipe)
+        self.assertIn('[ "$$build_status" -eq 0 ] || exit "$$build_status"', test_recipe)
+        self.assertNotIn("ARCH=universal", test_recipe)
+
+    def test_standard_build_keeps_main_native_default_and_universal_alias(self) -> None:
+        makefile = (Path(__file__).resolve().parents[1] / "Makefile").read_text()
+
+        self.assertIn("ARCH ?= $(shell uname -m)", makefile)
+        self.assertIn(
+            "BUILD_ARCHS = $(if $(filter universal,$(ARCH)),arm64 x86_64,$(ARCH))",
+            makefile,
+        )
+        self.assertIn('build CONFIG="$(CONFIG)" ARCH=universal', makefile)
+        self.assertIn("install: ARCH = universal", makefile)
 
 
 if __name__ == "__main__":

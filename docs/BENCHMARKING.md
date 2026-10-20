@@ -10,7 +10,7 @@ From the repository root, run:
 make benchmark
 ```
 
-The command deletes its dedicated benchmark directory before building, refuses to proceed if the result bundle path is still occupied, and runs only the `UnicornCorePerformanceTests` test plan. It compiles production `UnicornCore` in Release on the host's native architecture with coverage and parallel testing disabled. The performance target imports the module normally, without `@testable`. Routine Xcode build output is hidden so the report remains easy to scan; if the build fails, its captured output is replayed before the failure summary. `make benchmark-native` exposes the reusable execution stage and automatically prints the same summary, while `make benchmark-summary` regenerates reporting from an existing result bundle.
+The command deletes its dedicated benchmark directory before building, refuses to proceed if the result bundle path is still occupied, and runs only the `UnicornCorePerformanceTests` test plan. It compiles production `UnicornCore` in Release on the host's native architecture with coverage and parallel testing disabled. The performance target imports the module normally, without `@testable`. Routine Xcode build output is hidden so the report remains easy to scan; if the build fails, its captured output is replayed before the failure summary. `make benchmark-native` exposes the reusable execution stage and automatically prints the same summary. Before measurement, it captures the production keymap identity and system versions in a provenance sidecar for that result bundle. `make benchmark-summary` regenerates reporting from the stored provenance and result bundle, not from the current keymap or system-version commands. Missing or malformed provenance makes regeneration fail.
 
 Do not use `make test` as a benchmark command. The ordinary `UnicornCoreTests` plan uses a Debug correctness build with coverage and contains only the correctness target. Conversely, the dedicated performance plan contains only the benchmark target, and `make benchmark` does not run the correctness suite.
 
@@ -41,12 +41,13 @@ Checksums consume actions and committed Unicode scalars after every public opera
 All generated files stay under the ignored `build/Benchmark/` directory:
 
 - `Results/UnicornCorePerformanceTests.xcresult`: the deterministic, dedicated Xcode result bundle path;
+- `Results/UnicornCorePerformanceTests.xcresult.provenance.json`: the keymap and system provenance captured for that measured run;
 - `Summary/xcode-test-summary.json`: the supported `xcresulttool get test-results summary` export;
 - `Summary/xcode-performance-metrics.json`: the supported `xcresulttool get test-results metrics` export;
 - `Summary/benchmark-summary.json`: the two Xcode exports combined with benchmark context and computed sample averages;
 - `DerivedData/`, `BuildProducts/`, and `Intermediates/`: benchmark-only build products.
 
-The context records production keymap byte count and SHA-256, native architecture, macOS product and build versions, Xcode version and build, Swift version, Release configuration, measurement iterations, and synthetic-fixture dimensions. The concise terminal report shows batch-average wall-clock and CPU time, peak memory for selected workloads, and wall-clock relative standard deviation as variation:
+The context records the captured production keymap byte count and SHA-256, native architecture, macOS product and build versions, Xcode version and build, Swift version, Release configuration, measurement iterations, and synthetic-fixture dimensions. Report exports are prepared in temporary files. The final summary artifacts replace their prior versions only after all exports and report generation succeed. A failed standalone export removes all final summary artifacts, so stale files cannot appear to describe the failed attempt. The concise terminal report shows batch-average wall-clock and CPU time, peak memory for selected workloads, and wall-clock relative standard deviation as variation:
 
 ```text
 UNICORN BENCHMARKS  COMPLETE  passed=7 failed=0 skipped=0 total=7

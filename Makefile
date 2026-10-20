@@ -47,7 +47,6 @@ BENCHMARK_SUMMARY_DIR ?= $(BENCHMARK_ROOT)/Summary
 BENCHMARK_XCODE_SUMMARY ?= $(BENCHMARK_SUMMARY_DIR)/xcode-test-summary.json
 BENCHMARK_XCODE_METRICS ?= $(BENCHMARK_SUMMARY_DIR)/xcode-performance-metrics.json
 BENCHMARK_SUMMARY ?= $(BENCHMARK_SUMMARY_DIR)/benchmark-summary.json
-BENCHMARK_KEYMAP ?= unicorn/keymap.json
 APP_BUNDLE ?= $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 APP_EXECUTABLE ?= $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 INSTALL_DIR ?= $(HOME)/Library/Input Methods
@@ -234,7 +233,7 @@ benchmark-native:
 	rm -f "$$provenance_tmp"; \
 	if python3 scripts/benchmark_report.py \
 		--capture-provenance \
-		--keymap "$(BENCHMARK_KEYMAP)" \
+		--keymap unicorn/keymap.json \
 		--output "$$provenance_tmp" && \
 		mv "$$provenance_tmp" "$(BENCHMARK_PROVENANCE)"; then \
 		:; \
