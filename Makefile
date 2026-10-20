@@ -122,7 +122,7 @@ build:
 		printf '%b%s\n' "$(FAIL_LABEL)" " App build: configuration=$(CONFIG) archs=$(BUILD_ARCHS) exit=$$status"; \
 		exit "$$status"; \
 	fi
-	@if /usr/bin/lipo "$(APP_EXECUTABLE)" -verify_arch $(BUILD_ARCHS); then \
+	@if xcrun lipo "$(APP_EXECUTABLE)" -verify_arch $(BUILD_ARCHS); then \
 		printf '%b%s\n' "$(PASS_LABEL)" " App build: configuration=$(CONFIG) archs=$(BUILD_ARCHS) path=$(APP_BUNDLE)"; \
 	else \
 		status=$$?; \

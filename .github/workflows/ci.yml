@@ -64,10 +64,7 @@ jobs:
     - uses: *checkout-action
 
     - name: Run tests
-      run: |
-        mkdir -p build/Diagnostics
-        make --silent _test \
-          2>&1 | tee build/Diagnostics/tests-and-coverage.log
+      run: make --silent _test
 
     - name: Report tests and coverage
       if: always()
@@ -100,12 +97,11 @@ jobs:
       run: |
         root="$PWD/build/Sanitizers/AddressUndefined"
         rm -rf "$root"
-        mkdir -p "$root" build/Diagnostics
+        mkdir -p "$root"
         make --silent _test \
           XCODEBUILD='xcodebuild -enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES' \
           TEST_ROOT="$root" \
-          TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult" \
-          2>&1 | tee build/Diagnostics/address-undefined-sanitizers.log
+          TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult"
 
     - name: Report sanitizer test results
       if: always()
@@ -139,16 +135,14 @@ jobs:
         # ephemeral runner teardown; CI never installs it, copies it into Input Methods, explicitly registers it, or activates it.
         root="$PWD/build/CIRelease"
         rm -rf "$root"
-        mkdir -p "$root" build/Diagnostics
+        mkdir -p "$root"
         make --silent build \
           CONFIG=Release \
           ARCH=universal \
           SYMROOT="$root/Products" \
-          OBJROOT="$root/Intermediates" \
-          2>&1 | tee build/Diagnostics/release-cross-architecture.log
+          OBJROOT="$root/Intermediates"
 
     - name: Verify Release bundle
       run: |
         scripts/ci/verify-release-build.sh \
-          build/CIRelease/Products/Release/unicorn.app \
-          2>&1 | tee -a build/Diagnostics/release-cross-architecture.log
+          build/CIRelease/Products/Release/unicorn.app
