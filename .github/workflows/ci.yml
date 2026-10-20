@@ -69,22 +69,13 @@ jobs:
         make --silent _test \
           2>&1 | tee build/Diagnostics/tests-and-coverage.log
 
-    - name: Report test results
+    - name: Report tests and coverage
       if: always()
       continue-on-error: true
       run: |
         result=build/Test/Results/UnicornCoreTests.xcresult
         if [[ -d "$result" ]]; then
           make --silent test-summary TEST_RESULT_BUNDLE="$result" NO_COLOR=1
-        fi
-
-    - name: Render coverage
-      if: always()
-      continue-on-error: true
-      run: |
-        result=build/Test/Results/UnicornCoreTests.xcresult
-        if [[ -d "$result" ]]; then
-          make --silent coverage-report TEST_RESULT_BUNDLE="$result" NO_COLOR=1
         fi
 
     - name: Upload test diagnostics
