@@ -66,7 +66,7 @@ jobs:
     - name: Run tests
       run: |
         mkdir -p build/Diagnostics
-        make --silent test \
+        make --silent _test \
           2>&1 | tee build/Diagnostics/tests-and-coverage.log
 
     - name: Report test results
@@ -110,7 +110,7 @@ jobs:
         root="$PWD/build/Sanitizers/AddressUndefined"
         rm -rf "$root"
         mkdir -p "$root" build/Diagnostics
-        make --silent test \
+        make --silent _test \
           XCODEBUILD='xcodebuild -enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES' \
           TEST_ROOT="$root" \
           TEST_RESULT_BUNDLE="$root/UnicornCoreTests.xcresult" \
@@ -150,9 +150,9 @@ jobs:
         root="$PWD/build/CIRelease"
         rm -rf "$root"
         mkdir -p "$root" build/Diagnostics
-        make --silent build-universal \
+        make --silent build \
           CONFIG=Release \
-          ARCHS='arm64 x86_64' \
+          ARCH=universal \
           SYMROOT="$root/Products" \
           OBJROOT="$root/Intermediates" \
           2>&1 | tee build/Diagnostics/release-cross-architecture.log

@@ -10,7 +10,7 @@ These facts describe the checked-in app. They do not remove the inherent risk of
 
 ## Signing and Published Artifact Evidence
 
-The documented `make build` command overrides Xcode's signing identity with `-`, producing an ad-hoc signature. The tagged-release workflow uses that command.
+The documented `make build` command overrides Xcode's signing identity with `-`, producing an ad-hoc signature. The tagged-release workflow uses `make build ARCH=universal` to build both supported slices.
 
 The published v0.1.2 artifact provides a concrete snapshot of current distribution behavior:
 
@@ -46,7 +46,7 @@ Pull-request CI does not run the installer, copy Unicorn into Input Methods, exp
 
 Tags matching `v*` or `test-*` trigger [`.github/workflows/release.yml`](../../.github/workflows/release.yml). The workflow:
 
-1. builds with `make build`;
+1. builds with `make build ARCH=universal`;
 2. packages the app, installer, and executable checksum in `unicorn-macos.zip`;
 3. uploads the archive and `checksum.txt` to a draft GitHub release;
 4. downloads the archive in a separate job, adds a quarantine attribute, runs the bundled installer with confirmation, and verifies that quarantine is absent from the installed app;
