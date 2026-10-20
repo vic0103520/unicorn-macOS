@@ -21,7 +21,6 @@ XCODE_SIGNING_ARGS = \
 
 PASS_LABEL = $(if $(filter 1,$(NO_COLOR)),[PASS],\033[1;32m[PASS]\033[0m)
 FAIL_LABEL = $(if $(filter 1,$(NO_COLOR)),[FAIL],\033[1;31m[FAIL]\033[0m)
-RESULT_LABEL = $(if $(filter 1,$(NO_COLOR)),[RESULT],\033[1;36m[RESULT]\033[0m)
 
 SYMROOT ?= $(abspath $(BUILD_DIR))
 OBJROOT ?= $(SYMROOT)/obj
@@ -42,7 +41,7 @@ BUILD_ARCHS = $(if $(filter universal,$(ARCH)),arm64 x86_64,$(ARCH))
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test _test test-summary coverage coverage-report lint format
+.PHONY: test _test test-summary lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -196,10 +195,3 @@ test-summary:
 	@scripts/ci/summarize-tests.py "$(TEST_RESULT_BUNDLE)" \
 		--configuration Debug \
 		$(if $(filter 1,$(NO_COLOR)),--no-color,)
-
-coverage: test
-	+@$(MAKE) --no-print-directory coverage-report
-
-coverage-report:
-	@printf '%b%s\n' "$(RESULT_LABEL)" " UnicornCore coverage: xcresult=$(TEST_RESULT_BUNDLE)"
-	@xcrun xccov view --report --only-targets "$(TEST_RESULT_BUNDLE)"
