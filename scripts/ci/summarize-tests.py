@@ -45,6 +45,25 @@ def result_color(result: str) -> str:
     return "red"
 
 
+def coverage_table(report: dict) -> str:
+    rows: list[tuple[str, str]] = []
+    for target in report.get("targets", []):
+        name = target.get("name", "unknown")
+        covered = target.get("coveredLines", 0)
+        executable = target.get("executableLines", 0)
+        if executable == 0:
+            coverage = "No measured lines (0/0)"
+        else:
+            percentage = 100 * covered / executable
+            coverage = f"{percentage:.2f}% ({covered}/{executable})"
+        rows.append((name, coverage))
+
+    name_width = max([len("Name"), *(len(name) for name, _ in rows)])
+    lines = [f"{'Name'.ljust(name_width)} Coverage"]
+    lines.extend(f"{name.ljust(name_width)} {coverage}" for name, coverage in rows)
+    return "\n    ".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("result_bundle")
@@ -67,11 +86,11 @@ def main() -> int:
         return 1
 
     try:
-        coverage = subprocess.check_output([
-            "xcrun", "xccov", "view", "--report", "--only-targets",
+        coverage = coverage_table(command_json([
+            "xcrun", "xccov", "view", "--report", "--json",
             args.result_bundle,
-        ], text=True, stderr=subprocess.PIPE).strip()
-    except (OSError, subprocess.CalledProcessError):
+        ]))
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
         coverage = "unavailable"
 
     result = summary.get("result", "unknown")
@@ -100,7 +119,7 @@ def main() -> int:
         f"skipped={styled(skipped, 'yellow', color)} "
         f"expected-failures={styled(expected_failures, 'yellow', color)}"
     )
-    print(f"  Coverage: {styled(coverage or 'unavailable', 'cyan', color)}")
+    print(f"  Coverage:\n    {styled(coverage or 'unavailable', 'cyan', color)}")
     print(f"  xcresult: {styled(args.result_bundle, 'cyan', color)}")
     return 0 if result == "Passed" and failed == 0 else 1
 

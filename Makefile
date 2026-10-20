@@ -41,7 +41,7 @@ BUILD_ARCHS = $(if $(filter universal,$(ARCH)),arm64 x86_64,$(ARCH))
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test _test test-summary lint format
+.PHONY: test _test test-summary coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -195,3 +195,7 @@ test-summary:
 	@scripts/ci/summarize-tests.py "$(TEST_RESULT_BUNDLE)" \
 		--configuration Debug \
 		$(if $(filter 1,$(NO_COLOR)),--no-color,)
+
+# Show detailed coverage from existing results. Usage: make coverage-report [TEST_RESULT_BUNDLE=path]
+coverage-report:
+	@xcrun xccov view --report "$(TEST_RESULT_BUNDLE)"
