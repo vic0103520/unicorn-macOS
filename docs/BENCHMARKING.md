@@ -1,53 +1,80 @@
 # Core Benchmarking
 
-Unicorn's deterministic core benchmarks measure public `UnicornCore` operations without launching `unicorn.app`, InputMethodKit, or the candidate window. They run in a separate hostless XCTest target so correctness tests, sanitizers, and coverage instrumentation do not execute or distort them.
+The deterministic core benchmarks measure public `UnicornCore` operations. They do not start `unicorn.app`, InputMethodKit, or the candidate window. They use a separate hostless XCTest target. Thus, correctness tests, sanitizers, and coverage instrumentation do not change the measurements.
 
-## Running the benchmarks
+## Run the benchmarks
 
-From the repository root, run:
+Run this command from the repository root:
 
 ```sh
 make benchmark
 ```
 
-The command deletes its dedicated benchmark directory before building, refuses to proceed if the result bundle path is still occupied, and runs only the `UnicornCorePerformanceTests` test plan. It compiles production `UnicornCore` in Release on the host's native architecture with coverage and parallel testing disabled. The performance target imports the module normally, without `@testable`. Routine Xcode build output is hidden so the report remains easy to scan; if the build fails, its captured output is replayed before the failure summary. `make benchmark-native` exposes the reusable execution stage and automatically prints the same summary. Before measurement, it captures the production keymap identity and system versions in a provenance sidecar for that result bundle. `make benchmark-summary` regenerates reporting from the stored provenance and result bundle, not from the current keymap or system-version commands. Missing or malformed provenance makes regeneration fail.
+The command deletes its benchmark directory before the build. It stops if the result bundle path is still in use. It runs only the `UnicornCorePerformanceTests` test plan.
 
-Do not use `make test` as a benchmark command. The ordinary `UnicornCoreTests` plan uses a Debug correctness build with coverage and contains only the correctness target. Conversely, the dedicated performance plan contains only the benchmark target, and `make benchmark` does not run the correctness suite.
+The command builds production `UnicornCore` in Release configuration for the native host architecture. It disables coverage and parallel testing. The performance target imports the module without `@testable`.
+
+The command hides standard Xcode build output. This keeps the report easy to read. If the build fails, the command shows the captured build output before the failure summary.
+
+`make benchmark-native` runs the reusable execution stage and prints the same summary. Before measurement, this stage records the production keymap identity and the system versions. It stores this data in a provenance sidecar for the result bundle.
+
+`make benchmark-summary` creates the report again from the stored provenance and the result bundle. It does not read the current keymap or run current system-version commands. The command fails if the provenance is missing or malformed.
+
+Do not use `make test` as a benchmark command. The `UnicornCoreTests` plan uses a Debug correctness build with coverage. This plan contains only the correctness target. The performance plan contains only the benchmark target. `make benchmark` does not run the correctness suite.
 
 ## Fixtures and workloads
 
-The primary fixture is the exact production [`keymap.json`](../unicorn/keymap.json), copied into the performance-test bundle from its production source path. Each run records its byte count and SHA-256 digest. Setup, including loading fixture bytes, decoding setup engines, enumerating paths, and warming each workload once, occurs before XCTest starts measuring.
+The primary fixture is the exact production [`keymap.json`](../unicorn/keymap.json). The build copies this file from its production source path into the performance-test bundle. Each run records the file byte count and SHA-256 digest.
 
-Each XCTest measurement contains five samples. Tiny operations are batched at a fixed size so timer overhead does not dominate.
+Setup occurs before XCTest starts measurement. Setup loads the fixture bytes, decodes the setup engines, lists the paths, and warms each workload one time.
 
-| Workload | Measured batch per sample | Post-measurement invariant | Metrics |
+Each XCTest measurement has five samples. The tests put small operations into fixed-size batches. This reduces the effect of timer overhead.
+
+| Workload | Measured batch for each sample | Check after measurement | Metrics |
 | --- | --- | --- | --- |
-| In-memory production-keymap initialization | Decode 10 independent engines from already loaded keymap bytes | Every decode succeeds and each root has the expected 79 children | Wall clock, CPU, memory |
-| Every candidate-bearing production path | Traverse all 2,046 paths 50 times, or 102,300 path traversals | The fixture has 3,248 candidates across those paths and every measured traversal reproduces that total | Wall clock, CPU |
-| Common production composition | Run 1,000 cycles covering `\alpha`, `\lambda` plus Enter, `\notin`, and `\Longrightarrow` through `Engine.processKey` | Warm-up commits are `α`, `λ`, `∉`, and `⇒`; measured checksums match and the engine ends inactive | Wall clock, CPU |
-| Deterministic mixed composition | Run 500 cycles of 18 public key operations | Commits, invalid-continuation fallback, backspace, row and page navigation, numeric selection, and consecutive symbols produce the expected observable actions; the engine ends inactive | Wall clock, CPU |
-| Accumulating soft commit and history | Run 50 cycles containing `\le\alpha` and a chain of 32 `le` soft commits followed by `lambda` and Enter | Commits are `≤α` and 32 `≤` symbols followed by `λ`; checksums match and the engine ends inactive | Wall clock, CPU, memory |
-| Undo and history pressure | Run 500 cycles crossing the 100-entry history boundary and applying 101 backspaces | History reaches 100, remains capped at 100 after another push, and undo finishes inactive with empty history | Wall clock, CPU, memory |
-| Production candidate navigation and selection | Run 5,000 cycles of 18 public operations after entering `apl` | The real `apl` node has 70 candidates; row movement, paging, direct selection of candidate 70, and Enter complete with matching observable output and an inactive engine | Wall clock, CPU |
+| In-memory production-keymap initialization | Decode 10 independent engines from keymap bytes that are in memory | Each decode succeeds. Each root has the expected 79 children. | Wall clock, CPU, memory |
+| Every candidate-bearing production path | Traverse all 2,046 paths 50 times. This gives 102,300 path traversals. | The fixture has 3,248 candidates on these paths. Each measured traversal gives the same total. | Wall clock, CPU |
+| Common production composition | Run 1,000 cycles. Each cycle uses `\alpha`, `\lambda` plus Enter, `\notin`, and `\Longrightarrow` through `Engine.processKey`. | Warm-up commits are `α`, `λ`, `∉`, and `⇒`. Measured checksums agree. The engine is inactive at the end. | Wall clock, CPU |
+| Deterministic mixed composition | Run 500 cycles of 18 public key operations. | The operations give the expected observable actions. They cover commits, invalid-continuation fallback, backspace, row and page navigation, numeric selection, and consecutive symbols. The engine is inactive at the end. | Wall clock, CPU |
+| Accumulating soft commit and history | Run 50 cycles. Each cycle contains `\le\alpha` and a chain of 32 `le` soft commits, then `lambda` and Enter. | Commits are `≤α` and 32 `≤` symbols followed by `λ`. Measured checksums agree. The engine is inactive at the end. | Wall clock, CPU, memory |
+| Undo and history pressure | Run 500 cycles. Each cycle crosses the 100-entry history boundary and applies 101 backspaces. | History reaches 100 and stays at 100 after one more push. Undo ends with an inactive engine and empty history. | Wall clock, CPU, memory |
+| Production candidate navigation and selection | Run 5,000 cycles of 18 public operations after entry of `apl`. | The real `apl` node has 70 candidates. Row movement, paging, direct selection of candidate 70, and Enter give the expected output. The engine is inactive at the end. | Wall clock, CPU |
 
-The mixed workload's expected commits are `α`, `λ`, `∉`, `⍁`, and `≤α`. It verifies that the invalid continuation after `\lambda` emits a commit followed by rejection, which is the fallback observable to the shell.
+The expected commits for the mixed workload are `α`, `λ`, `∉`, `⍁`, and `≤α`. The test also checks the invalid continuation after `\lambda`. This continuation emits a commit and then a rejection. This is the fallback that the shell can observe.
 
-The sole synthetic fixture is used only for the otherwise narrow history-cap boundary. Its JSON is 30 bytes and describes 3 trie nodes, maximum depth 2, maximum branching factor 1, one candidate-bearing node, and 2 candidates. The starting state contains 99 deterministic history snapshots. This is the smallest fixture needed to push once to 100, push once past the cap, and then drain history through public reduction operations.
+The suite uses one synthetic fixture only for the narrow history-cap boundary. Its JSON has 30 bytes. It describes 3 trie nodes, a maximum depth of 2, a maximum branching factor of 1, one candidate-bearing node, and 2 candidates. The initial state has 99 deterministic history snapshots. This is the smallest fixture that can do these operations:
 
-Checksums consume actions and committed Unicode scalars after every public operation. They are asserted after measurement, along with state and fixture invariants, so a run with an incorrect observable result fails instead of publishing timing from invalid work.
+1. Push history to 100.
+2. Push one more time past the cap.
+3. Drain history through public reduction operations.
+
+Checksums use actions and committed Unicode scalars after each public operation. After measurement, the tests check the checksums, state, and fixture invariants. If an observable result is incorrect, the run fails and does not publish its timing as valid.
 
 ## Generated artifacts
 
-All generated files stay under the ignored `build/Benchmark/` directory:
+All generated files stay in the ignored `build/Benchmark/` directory:
 
-- `Results/UnicornCorePerformanceTests.xcresult`: the deterministic, dedicated Xcode result bundle path;
-- `Results/UnicornCorePerformanceTests.xcresult.provenance.json`: the keymap and system provenance captured for that measured run;
-- `Summary/xcode-test-summary.json`: the supported `xcresulttool get test-results summary` export;
-- `Summary/xcode-performance-metrics.json`: the supported `xcresulttool get test-results metrics` export;
-- `Summary/benchmark-summary.json`: the two Xcode exports combined with benchmark context and computed sample averages;
-- `DerivedData/`, `BuildProducts/`, and `Intermediates/`: benchmark-only build products.
+- `Results/UnicornCorePerformanceTests.xcresult` is the fixed Xcode result bundle path.
+- `Results/UnicornCorePerformanceTests.xcresult.provenance.json` contains the keymap and system provenance for the measured run.
+- `Summary/xcode-test-summary.json` is the supported `xcresulttool get test-results summary` export.
+- `Summary/xcode-performance-metrics.json` is the supported `xcresulttool get test-results metrics` export.
+- `Summary/benchmark-summary.json` combines the two Xcode exports with benchmark context and calculated sample averages.
+- `DerivedData/`, `BuildProducts/`, and `Intermediates/` contain only benchmark build products.
 
-The context records the captured production keymap byte count and SHA-256, native architecture, macOS product and build versions, Xcode version and build, Swift version, Release configuration, measurement iterations, and synthetic-fixture dimensions. Report exports are prepared in temporary files. The final summary artifacts replace their prior versions only after all exports and report generation succeed. A failed standalone export removes all final summary artifacts, so stale files cannot appear to describe the failed attempt. The concise terminal report shows batch-average wall-clock and CPU time, peak memory for selected workloads, and wall-clock relative standard deviation as variation:
+The context contains these captured values:
+
+- production keymap byte count and SHA-256 digest;
+- native architecture;
+- macOS product version and build version;
+- Xcode version and build version;
+- Swift version;
+- Release configuration;
+- measurement iteration count;
+- synthetic-fixture dimensions.
+
+The report command prepares exports in temporary files. It publishes the final summary files only after all exports and report generation succeed. If a standalone export fails, the command removes all final summary files. Thus, stale files cannot look like results from the failed attempt.
+
+The concise terminal report shows the average wall-clock and CPU time for each batch. It shows peak memory for selected workloads. It shows the relative standard deviation of wall-clock time as variation.
 
 ```text
 UNICORN BENCHMARKS  COMPLETE  passed=7 failed=0 skipped=0 total=7
@@ -61,20 +88,58 @@ Results: build/Benchmark
 Thresholds: not enforced
 ```
 
-Column widths adapt to the measured values. In an interactive terminal, the passing result is green, headings and the artifact path are cyan, the no-threshold notice is yellow, and workload names are bold. Output remains plain and aligned when redirected, when `CI` is set, or when `NO_COLOR` is present in the environment. The JSON retains every raw sample and additional CPU counters that XCTest reports on the current host. Run `make benchmark-report-test` for the focused plain and colored formatter tests.
+Column widths adjust to the measured values. In an interactive terminal, the passing result is green. Headings and the artifact path are cyan. The no-threshold notice is yellow. Workload names are bold.
 
-## Interpreting and comparing runs
+Output stays plain and aligned in these conditions:
 
-These are deterministic feature workloads, not universally comparable scores. Results include process startup state, XCTest overhead that remains after batching, host hardware, power and thermal state, OS scheduling, compiler and SDK versions, and background activity. Memory deltas can quantize to zero; use peak physical memory and repeated behavior rather than a single delta sample. Initialization starts from bytes already in memory, so it does not claim cold filesystem startup.
+- output is redirected;
+- `CI` is set;
+- `NO_COLOR` is present in the environment.
 
-The suite does not measure installed-app latency, InputMethodKit integration, candidate-window rendering, Intel runtime performance when run on Apple silicon, the minimum supported macOS version, or cross-machine performance. Universal app builds establish compilation for their architecture slices only and are not benchmark results.
+The JSON keeps each raw sample. It also keeps the additional CPU counters that XCTest reports on the current host. Run `make benchmark-report-test` to run the focused tests for the plain and colored formatter.
 
-For a local comparison:
+## Interpret and compare runs
 
-1. Use the same clean git state, host, power mode, Xcode, and macOS version.
-2. Close noisy applications and allow the host to reach a stable thermal state.
-3. Run `make benchmark` several times for each revision, alternating revisions when practical.
+These deterministic feature workloads are not scores that you can compare on all systems. Results include these effects:
+
+- process startup state;
+- XCTest overhead that remains after batching;
+- host hardware;
+- power and thermal state;
+- operating-system scheduling;
+- compiler and SDK versions;
+- background activity.
+
+Memory differences can round to zero. Use peak physical memory and repeated behavior. Do not use one difference sample. Initialization starts with bytes that are already in memory. It does not measure cold file-system startup.
+
+The suite does not measure these items:
+
+- installed-app latency;
+- InputMethodKit integration;
+- candidate-window rendering;
+- Intel runtime performance when the suite runs on Apple silicon;
+- the minimum supported macOS version;
+- performance comparisons between different computers.
+
+Universal app builds only show that the architecture slices compile. They are not benchmark results.
+
+Use this procedure for a local comparison:
+
+1. Use the same clean git state, host, power mode, Xcode version, and macOS version.
+2. Close applications that cause variable system load. Let the host reach a stable thermal state.
+3. Run `make benchmark` several times for each revision. Alternate the revisions when this is practical.
 4. Save each `build/Benchmark/Summary/benchmark-summary.json` outside `build/` before the next run deletes it.
-5. Compare all raw samples and relative standard deviations. Investigate a consistent shift across repeated runs, not one outlier or one shared-runner result.
+5. Compare all raw samples and relative standard deviations. Investigate a change that occurs in repeated runs. Do not use one outlier or one result from a shared runner.
 
-There are no blocking numeric thresholds in this suite. COMPLETE means all seven workloads passed and every required metric contains five samples. Failed XCTest runs may still show the metrics collected before failure, but a compile failure, XCTest failure, invariant failure, incomplete measurement set, result-export failure, or report-generation failure makes `make benchmark` fail. Numeric regression gates should be added only after repeated variance evidence exists on a stable dedicated host. The benchmark is intentionally absent from ordinary pull-request CI until that evidence and host exist.
+The suite has no blocking numeric thresholds. COMPLETE has a specific meaning: all seven workloads passed, and each required metric has five samples.
+
+A failed XCTest run can show metrics that it collected before the failure. However, `make benchmark` fails for each of these conditions:
+
+- compile failure;
+- XCTest failure;
+- invariant failure;
+- incomplete measurement set;
+- result-export failure;
+- report-generation failure.
+
+Add numeric regression gates only after repeated tests show the variance on a stable, dedicated host. The benchmark does not run in the standard pull-request CI. Do not add it until the required variance evidence and host are available.

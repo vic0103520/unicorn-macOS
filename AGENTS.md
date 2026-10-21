@@ -12,7 +12,7 @@ This file is the repository-wide operating guide for contributors and coding age
 | Technical security, signing, installer, integrity, and distribution behavior | [`docs/specs/security_and_distribution.md`](docs/specs/security_and_distribution.md) |
 | Documentation writing and review standards | [`docs/DOCUMENTATION_GUIDE.md`](docs/DOCUMENTATION_GUIDE.md) |
 | Build, test, benchmark, lint, install, and release commands | [`Makefile`](Makefile) |
-| Deterministic core benchmark workloads, artifacts, and interpretation | [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md) |
+| Core benchmark workloads, artifacts, and result interpretation | [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md) |
 
 When documentation conflicts with implementation or automation, verify the current source, project settings, scripts, tests, workflows, and published artifacts before updating the canonical owner. Describe desired but unimplemented behavior as future work, never as current behavior.
 
@@ -42,9 +42,9 @@ make coverage-report
 - `make test` runs the hostless `UnicornCoreTests` bundle with coverage collection, builds a native Debug app, and reports the test results. Test and app-build failures are authoritative; reporting is best effort.
 - Test diagnostics and coverage data are stored in `build/Test/Results/UnicornCoreTests.xcresult`. All test intermediates stay under the ignored `build/Test/` directory.
 - `make coverage-report` shows detailed coverage from that existing result bundle without rerunning tests or the app build.
-- `make benchmark` runs only the hostless `UnicornCorePerformanceTests` plan against optimized Release `UnicornCore` on the native architecture. Benchmark results and machine-readable summaries stay under `build/Benchmark/`; see [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
+- `make benchmark` runs only the hostless `UnicornCorePerformanceTests` plan. It uses Release `UnicornCore` on the native architecture. Results and machine-readable summaries stay under `build/Benchmark/`. See [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 - `make build` builds a Release app for the current architecture by default and overrides Xcode signing with the ad-hoc identity `-`. Set `ARCH=arm64`, `ARCH=x86_64`, or `ARCH=universal`; universal builds both supported slices.
-- `make _test`, `make build`, `make test-summary`, `make benchmark-native`, `make benchmark-summary`, and `make benchmark-report-test` expose separate verification stages. `make build-universal` remains a compatibility alias.
+- `make _test`, `make build`, and `make test-summary` expose separate test and build stages. `make benchmark-native`, `make benchmark-summary`, and `make benchmark-report-test` expose separate benchmark stages. `make build-universal` remains a compatibility alias.
 - `make install` builds, replaces the app in `~/Library/Input Methods/`, and registers it with Launch Services.
 
 The hostless suite uses Swift Testing for engine transitions, trie-backed lookup, candidates, history, limits, and presentation calculations.
@@ -68,7 +68,7 @@ Use standard `git` commands for local repository state such as branches, commits
 - `UnicornCore/FunctionalHelpers.swift`: the project's `|>` and `>>=` operators.
 - `UnicornCoreTests/EngineTests.swift`: Swift Testing engine and presentation-model tests.
 - `UnicornCorePerformanceTests/CoreWorkloadPerformanceTests.swift`: deterministic XCTest performance workloads.
-- `docs/BENCHMARKING.md`: benchmark command, artifacts, workloads, and interpretation limits.
+- `docs/BENCHMARKING.md`: benchmark commands, artifacts, workloads, and result limits.
 - `unicorn/InputController.swift`: InputMethodKit integration.
 - `unicorn/keymap.json`: bundled symbol data.
 - `.github/workflows/`: pull-request CI and tagged-release automation.
