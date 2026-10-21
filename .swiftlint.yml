@@ -2,6 +2,7 @@ included:
   - unicorn
   - UnicornCore
   - UnicornCoreTests
+  - UnicornCorePerformanceTests
 
 excluded:
   - build

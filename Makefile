@@ -22,6 +22,14 @@ XCODE_SIGNING_ARGS = \
 PASS_LABEL = $(if $(filter 1,$(NO_COLOR)),[PASS],\033[1;32m[PASS]\033[0m)
 FAIL_LABEL = $(if $(filter 1,$(NO_COLOR)),[FAIL],\033[1;31m[FAIL]\033[0m)
 
+define BENCHMARK_FAILURE
+if [ -t 1 ] && [ -z "$${CI+x}" ] && [ -z "$${NO_COLOR+x}" ]; then \
+	printf '\033[1;31m[FAIL]\033[0m %s\n' "$(1)"; \
+else \
+	printf '[FAIL] %s\n' "$(1)"; \
+fi
+endef
+
 SYMROOT ?= $(abspath $(BUILD_DIR))
 OBJROOT ?= $(SYMROOT)/obj
 NATIVE_ARCH ?= $(shell uname -m)
@@ -30,6 +38,15 @@ TEST_DERIVED_DATA ?= $(TEST_ROOT)/DerivedData
 TEST_RESULT_BUNDLE ?= $(TEST_ROOT)/Results/UnicornCoreTests.xcresult
 TEST_APP_SYMROOT ?= $(TEST_ROOT)/AppBuildProducts
 TEST_APP_OBJROOT ?= $(TEST_ROOT)/AppBuildIntermediates
+BENCHMARK_SCHEME ?= UnicornCorePerformanceTests
+BENCHMARK_ROOT ?= $(SYMROOT)/Benchmark
+BENCHMARK_DERIVED_DATA ?= $(BENCHMARK_ROOT)/DerivedData
+BENCHMARK_RESULT_BUNDLE ?= $(BENCHMARK_ROOT)/Results/UnicornCorePerformanceTests.xcresult
+BENCHMARK_PROVENANCE ?= $(BENCHMARK_RESULT_BUNDLE).provenance.json
+BENCHMARK_SUMMARY_DIR ?= $(BENCHMARK_ROOT)/Summary
+BENCHMARK_XCODE_SUMMARY ?= $(BENCHMARK_SUMMARY_DIR)/xcode-test-summary.json
+BENCHMARK_XCODE_METRICS ?= $(BENCHMARK_SUMMARY_DIR)/xcode-performance-metrics.json
+BENCHMARK_SUMMARY ?= $(BENCHMARK_SUMMARY_DIR)/benchmark-summary.json
 APP_BUNDLE ?= $(SYMROOT)/$(CONFIG)/$(APP_NAME).app
 APP_EXECUTABLE ?= $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 INSTALL_DIR ?= $(HOME)/Library/Input Methods
@@ -41,7 +58,8 @@ BUILD_ARCHS = $(if $(filter universal,$(ARCH)),arm64 x86_64,$(ARCH))
 GITHUB_REPO = $(shell git remote get-url origin 2>/dev/null | sed -E 's/.*github.com[:/](.*)(\.git)?/\1/' | sed 's/\.git$$//')
 
 .PHONY: all build build-universal build-debug install install-debug clean
-.PHONY: test _test test-summary coverage-report lint format
+.PHONY: test _test test-summary benchmark benchmark-native benchmark-summary benchmark-report-test
+.PHONY: coverage-report lint format
 .PHONY: release test-release clean-test-releases re-release _wipe_release
 
 all: build
@@ -195,6 +213,114 @@ test-summary:
 	@scripts/ci/summarize-tests.py "$(TEST_RESULT_BUNDLE)" \
 		--configuration Debug \
 		$(if $(filter 1,$(NO_COLOR)),--no-color,)
+
+benchmark: benchmark-native
+
+benchmark-native:
+	@echo "Running UnicornCore benchmarks in Release on $(NATIVE_ARCH)..."
+	@rm -rf "$(BENCHMARK_ROOT)"
+	@rm -f "$(BENCHMARK_PROVENANCE)" \
+		"$(BENCHMARK_XCODE_SUMMARY)" \
+		"$(BENCHMARK_XCODE_METRICS)" \
+		"$(BENCHMARK_SUMMARY)"
+	@mkdir -p "$(dir $(BENCHMARK_RESULT_BUNDLE))" \
+		"$(dir $(BENCHMARK_PROVENANCE))" \
+		"$(BENCHMARK_SUMMARY_DIR)"
+	@test ! -e "$(BENCHMARK_RESULT_BUNDLE)" || \
+		{ $(call BENCHMARK_FAILURE,Refusing stale benchmark result: path=$(BENCHMARK_RESULT_BUNDLE)); exit 1; }
+	@provenance_tmp="$(BENCHMARK_PROVENANCE).tmp"; \
+	trap 'rm -f "$$provenance_tmp"' EXIT; \
+	rm -f "$$provenance_tmp"; \
+	if python3 scripts/benchmark_report.py \
+		--capture-provenance \
+		--keymap unicorn/keymap.json \
+		--output "$$provenance_tmp" && \
+		mv "$$provenance_tmp" "$(BENCHMARK_PROVENANCE)"; then \
+		:; \
+	else \
+		status=$$?; \
+		$(call BENCHMARK_FAILURE,Benchmark provenance: output=$(BENCHMARK_PROVENANCE) exit=$$status); \
+		exit "$$status"; \
+	fi
+	@build_log="$$(mktemp)" || \
+		{ $(call BENCHMARK_FAILURE,Core benchmarks: unable to create temporary build log); exit 1; }; \
+	trap 'rm -f "$$build_log"' EXIT; \
+	if $(XCODEBUILD_COMMAND) test \
+		-project "$(XCODE_PROJECT)" \
+		-scheme "$(BENCHMARK_SCHEME)" \
+		-configuration Release \
+		-destination 'platform=macOS,arch=$(NATIVE_ARCH)' \
+		-derivedDataPath "$(BENCHMARK_DERIVED_DATA)" \
+		-resultBundlePath "$(BENCHMARK_RESULT_BUNDLE)" \
+		-only-testing:UnicornCorePerformanceTests \
+		-parallel-testing-enabled NO \
+		-enableCodeCoverage NO \
+		SYMROOT="$(BENCHMARK_ROOT)/BuildProducts" \
+		OBJROOT="$(BENCHMARK_ROOT)/Intermediates" \
+		ARCHS="$(NATIVE_ARCH)" \
+		ONLY_ACTIVE_ARCH=YES \
+		$(XCODE_SIGNING_ARGS) > "$$build_log" 2>&1; then \
+		:; \
+	else \
+		status=$$?; \
+		cat "$$build_log" >&2; \
+		$(call BENCHMARK_FAILURE,Core benchmarks: configuration=Release arch=$(NATIVE_ARCH) exit=$$status); \
+		if [ -e "$(BENCHMARK_RESULT_BUNDLE)" ]; then \
+			$(MAKE) --no-print-directory benchmark-summary || :; \
+		fi; \
+		exit "$$status"; \
+	fi
+	+@$(MAKE) --no-print-directory benchmark-summary
+
+benchmark-summary:
+	@mkdir -p "$(dir $(BENCHMARK_XCODE_SUMMARY))" \
+		"$(dir $(BENCHMARK_XCODE_METRICS))" \
+		"$(dir $(BENCHMARK_SUMMARY))"
+	@summary_tmp="$(BENCHMARK_XCODE_SUMMARY).tmp"; \
+	metrics_tmp="$(BENCHMARK_XCODE_METRICS).tmp"; \
+	report_tmp="$(BENCHMARK_SUMMARY).tmp"; \
+	trap 'rm -f "$$summary_tmp" "$$metrics_tmp" "$$report_tmp"' EXIT; \
+	rm -f "$(BENCHMARK_XCODE_SUMMARY)" \
+		"$(BENCHMARK_XCODE_METRICS)" \
+		"$(BENCHMARK_SUMMARY)" \
+		"$$summary_tmp" "$$metrics_tmp" "$$report_tmp"; \
+	if xcrun xcresulttool get test-results summary \
+		--path "$(BENCHMARK_RESULT_BUNDLE)" --compact > "$$summary_tmp" && \
+		xcrun xcresulttool get test-results metrics \
+		--path "$(BENCHMARK_RESULT_BUNDLE)" --compact > "$$metrics_tmp"; then \
+		:; \
+	else \
+		status=$$?; \
+		$(call BENCHMARK_FAILURE,Benchmark summary export: xcresult=$(BENCHMARK_RESULT_BUNDLE) exit=$$status); \
+		exit "$$status"; \
+	fi; \
+	if python3 scripts/benchmark_report.py \
+		--provenance "$(BENCHMARK_PROVENANCE)" \
+		--test-summary "$$summary_tmp" \
+		--metrics "$$metrics_tmp" \
+		--output "$$report_tmp" \
+		--artifact-path "$(BENCHMARK_ROOT)"; then \
+		:; \
+	else \
+		status=$$?; \
+		$(call BENCHMARK_FAILURE,Benchmark report: output=$(BENCHMARK_SUMMARY) exit=$$status); \
+		exit "$$status"; \
+	fi; \
+	if mv "$$summary_tmp" "$(BENCHMARK_XCODE_SUMMARY)" && \
+		mv "$$metrics_tmp" "$(BENCHMARK_XCODE_METRICS)" && \
+		mv "$$report_tmp" "$(BENCHMARK_SUMMARY)"; then \
+		:; \
+	else \
+		status=$$?; \
+		rm -f "$(BENCHMARK_XCODE_SUMMARY)" \
+			"$(BENCHMARK_XCODE_METRICS)" \
+			"$(BENCHMARK_SUMMARY)"; \
+		$(call BENCHMARK_FAILURE,Benchmark summary publication: output=$(BENCHMARK_SUMMARY_DIR) exit=$$status); \
+		exit "$$status"; \
+	fi
+
+benchmark-report-test:
+	@python3 scripts/test_benchmark_report.py
 
 # Show detailed coverage from existing results. Usage: make coverage-report [TEST_RESULT_BUNDLE=path]
 coverage-report:
