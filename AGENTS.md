@@ -67,7 +67,7 @@ Use standard `git` commands for local repository state such as branches, commits
 - `UnicornCore/Trie.swift`: immutable symbol trie.
 - `UnicornCore/FunctionalHelpers.swift`: the project's `|>` and `>>=` operators.
 - `UnicornCoreTests/EngineTests.swift`: Swift Testing engine and presentation-model tests.
-- `UnicornCorePerformanceTests/CoreWorkloadPerformanceTests.swift`: deterministic XCTest performance workloads.
+- `UnicornCorePerformanceTests/CoreWorkloadPerformanceTests.swift`: isolated XCTest performance workloads.
 - `docs/BENCHMARKING.md`: benchmark commands, artifacts, workloads, and result limits.
 - `unicorn/InputController.swift`: InputMethodKit integration.
 - `unicorn/keymap.json`: bundled symbol data.

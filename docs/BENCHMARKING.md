@@ -1,6 +1,6 @@
 # Core Benchmarking
 
-The deterministic core benchmarks measure public `UnicornCore` operations. They do not start `unicorn.app`, InputMethodKit, or the candidate window. They use a separate hostless XCTest target. Thus, correctness tests, sanitizers, and coverage instrumentation do not change the measurements.
+The core benchmarks isolate public `UnicornCore` operations in a separate hostless XCTest target. They do not start `unicorn.app`, InputMethodKit, or the candidate window. Correctness tests, sanitizers, and coverage instrumentation do not change the measurements.
 
 ## Run the benchmarks
 
@@ -35,14 +35,14 @@ Each XCTest measurement has five samples. The tests put small operations into fi
 | In-memory production-keymap initialization | Decode 10 independent engines from keymap bytes that are in memory | Each decode succeeds. Each root has the expected 79 children. | Wall clock, CPU, memory |
 | Every candidate-bearing production path | Traverse all 2,046 paths 50 times. This gives 102,300 path traversals. | The fixture has 3,248 candidates on these paths. Each measured traversal gives the same total. | Wall clock, CPU |
 | Common production composition | Run 1,000 cycles. Each cycle uses `\alpha`, `\lambda` plus Enter, `\notin`, and `\Longrightarrow` through `Engine.processKey`. | Warm-up commits are `α`, `λ`, `∉`, and `⇒`. Measured checksums agree. The engine is inactive at the end. | Wall clock, CPU |
-| Deterministic mixed composition | Run 500 cycles of 18 public key operations. | The operations give the expected observable actions. They cover commits, invalid-continuation fallback, backspace, row and page navigation, numeric selection, and consecutive symbols. The engine is inactive at the end. | Wall clock, CPU |
+| Mixed composition | Run 500 cycles of 18 public key operations. | The operations give the expected observable actions. They cover commits, invalid-continuation fallback, backspace, row and page navigation, numeric selection, and consecutive symbols. The engine is inactive at the end. | Wall clock, CPU |
 | Accumulating soft commit and history | Run 50 cycles. Each cycle contains `\le\alpha` and a chain of 32 `le` soft commits, then `lambda` and Enter. | Commits are `≤α` and 32 `≤` symbols followed by `λ`. Measured checksums agree. The engine is inactive at the end. | Wall clock, CPU, memory |
 | Undo and history pressure | Run 500 cycles. Each cycle crosses the 100-entry history boundary and applies 101 backspaces. | History reaches 100 and stays at 100 after one more push. Undo ends with an inactive engine and empty history. | Wall clock, CPU, memory |
 | Production candidate navigation and selection | Run 5,000 cycles of 18 public operations after entry of `apl`. | The real `apl` node has 70 candidates. Row movement, paging, direct selection of candidate 70, and Enter give the expected output. The engine is inactive at the end. | Wall clock, CPU |
 
 The expected commits for the mixed workload are `α`, `λ`, `∉`, `⍁`, and `≤α`. The test also checks the invalid continuation after `\lambda`. This continuation emits a commit and then a rejection. This is the fallback that the shell can observe.
 
-The suite uses one synthetic fixture only for the narrow history-cap boundary. Its JSON has 30 bytes. It describes 3 trie nodes, a maximum depth of 2, a maximum branching factor of 1, one candidate-bearing node, and 2 candidates. The initial state has 99 deterministic history snapshots. This is the smallest fixture that can do these operations:
+The suite uses one synthetic fixture only for the narrow history-cap boundary. Its JSON has 30 bytes. It describes 3 trie nodes, a maximum depth of 2, a maximum branching factor of 1, one candidate-bearing node, and 2 candidates. The initial state has 99 fixed history snapshots. This is the smallest fixture that can do these operations:
 
 1. Push history to 100.
 2. Push one more time past the cap.
@@ -100,7 +100,7 @@ The JSON keeps each raw sample. It also keeps the additional CPU counters that X
 
 ## Interpret and compare runs
 
-These deterministic feature workloads are not scores that you can compare on all systems. Results include these effects:
+These isolated core workloads are not scores that you can compare on all systems. Results include these effects:
 
 - process startup state;
 - XCTest overhead that remains after batching;
